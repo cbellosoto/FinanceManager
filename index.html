@@ -1323,7 +1323,13 @@ async function onGoogleCredential(response) {
       method: "POST", credentials: "same-origin", headers: apiHeaders(),
       body: JSON.stringify({ credential: response.credential })
     });
-    if (!res.ok) { $("loginError").textContent = "That Google account isn't on the household allowlist."; return; }
+    if (!res.ok) {
+      $("loginError").textContent =
+        res.status === 401 ? "That Google account isn't on the household allowlist." :
+        res.status === 429 ? "Too many sign-in attempts — wait a few minutes and try again." :
+        "Sign-in failed on the server (" + res.status + ") — check config.php and the database.";
+      return;
+    }
     await boot();
   } catch (e) {
     $("loginError").textContent = "Couldn't reach the server — try again.";

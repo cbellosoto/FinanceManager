@@ -105,7 +105,8 @@ function rate_limit_check(string $ip): void {
   $stmt = db()->prepare(
     'SELECT COUNT(*) FROM auth_attempts WHERE ip_address = ? AND attempted_at > (NOW() - INTERVAL ? MINUTE)'
   );
-  $stmt->bind_param('si', $ip, AUTH_RATE_LIMIT_WINDOW_MIN);
+  $windowMin = AUTH_RATE_LIMIT_WINDOW_MIN; // bind_param takes references, so no constants
+  $stmt->bind_param('si', $ip, $windowMin);
   $stmt->execute();
   $stmt->bind_result($count);
   $stmt->fetch();
