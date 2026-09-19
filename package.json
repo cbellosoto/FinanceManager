@@ -1,0 +1,13 @@
+{
+  "name": "financemanager-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser-driven regression tests for the Safe-to-Spend app (index.html).",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "test:install": "playwright install chromium"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.0"
+  }
+}
