@@ -572,6 +572,14 @@
     <p class="hint">Paydays roll forward automatically — once a payday passes, the window moves to the next one.
     The seed data uses a fixed “today” of 2024-07-12 so it matches the reference workbook; switch to the real
     date when you load your own numbers.</p>
+    <h2 style="margin-top:22px">Envelope categories (Phase 1)</h2>
+    <p class="hint">Stamp a stable <b>envelope id</b> on each ledger row (used later by the Envelopes tab).
+    Preview the remap first — nothing changes until you apply. Mixed merchants (Amazon, Walmart, Costco, Sam&apos;s)
+    stay unassigned for a human pick. Safe-to-spend math is unchanged.</p>
+    <div class="frow">
+      <button class="ghost" type="button" id="envRemapPreviewBtn">Preview category remap</button>
+    </div>
+    <div id="envRemapPreview"></div>
   </section>
 </div>
 
@@ -1200,6 +1208,180 @@ const STS = (() => {
     };
   }
 
+
+  // ---------- Envelope categorization (Phase 1) ----------
+  // Stable ids from docs/envelopes-design.md §2. Spent math (Phase 2) reads row.envelopeId only.
+  const ENVELOPE_DEFS = [
+    { id: "mortgage", name: "KC Mortgage", kind: "fixed" },
+    { id: "el-paso-rent", name: "El Paso Rent", kind: "fixed" },
+    { id: "mobile-phone", name: "Mobile Phone", kind: "fixed" },
+    { id: "home-internet", name: "Home Internet", kind: "fixed" },
+    { id: "household-utilities", name: "Household Utilities", kind: "variable" },
+    { id: "groceries", name: "Groceries", kind: "variable" },
+    { id: "restaurants", name: "Restaurants", kind: "variable" },
+    { id: "gas", name: "Gas", kind: "variable" },
+    { id: "health-insurance", name: "Health Insurance", kind: "fixed" },
+    { id: "life-insurance", name: "Life Insurance", kind: "fixed" },
+    { id: "car-insurance-sinking", name: "Car Insurance Sinking Fund", kind: "sinking" },
+    { id: "medical-financing", name: "Medical Financing", kind: "paused" },
+    { id: "providence-plan", name: "Providence Payment Plan", kind: "fixed" },
+    { id: "ui-health-plan", name: "UI Health Payment Plan", kind: "fixed" },
+    { id: "oop-medical", name: "Out-of-Pocket Medical", kind: "variable" },
+    { id: "elisa-spend", name: "Elisa Spend", kind: "variable" },
+    { id: "elisa-savings", name: "Elisa Savings", kind: "fixed" },
+    { id: "sara-personal-care", name: "Sara Personal Care", kind: "variable" },
+    { id: "cats", name: "Cats", kind: "variable" },
+    { id: "pest-control", name: "Pest Control", kind: "variable" },
+    { id: "subscriptions", name: "Subscriptions & Digital Services", kind: "variable" },
+    { id: "annual-renewals", name: "Known Annual Renewals", kind: "sinking" },
+    { id: "rental-tax-reserve", name: "Rental Tax Reserve", kind: "sinking" },
+    { id: "maintenance-reserve", name: "Home & Rental Maintenance Reserve", kind: "sinking" },
+    { id: "christopher-fun", name: "Christopher Personal & Fun", kind: "variable" },
+    { id: "sara-fun", name: "Sara Personal & Fun", kind: "variable" },
+    { id: "extra-debt-payoff", name: "Extra Debt Payoff", kind: "goal" },
+    { id: "emergency-savings", name: "Emergency Savings", kind: "goal" },
+    { id: "investing", name: "Investing", kind: "goal" },
+    { id: "buffer", name: "Unassigned Buffer", kind: "buffer" }
+  ];
+  const ENVELOPE_BY_ID = Object.fromEntries(ENVELOPE_DEFS.map(e => [e.id, e]));
+  const ENVELOPE_NAME_BY_ID = Object.fromEntries(ENVELOPE_DEFS.map(e => [e.id, e.name]));
+
+  // Free-text category / display label → stable envelope id (legacy map + canonical names).
+  const LEGACY_CATEGORY_MAP = {
+    "kc mortgage": "mortgage", "mortgage": "mortgage", "housing": "mortgage",
+    "el paso rent": "el-paso-rent", "rent": "el-paso-rent",
+    "mobile phone": "mobile-phone", "phone": "mobile-phone",
+    "home internet": "home-internet", "internet": "home-internet",
+    "household utilities": "household-utilities", "utilities": "household-utilities", "utility": "household-utilities",
+    "electric": "household-utilities", "water": "household-utilities", "gas utility": "household-utilities",
+    "groceries": "groceries", "grocery": "groceries",
+    "restaurants": "restaurants", "dining": "restaurants", "dining out": "restaurants", "restaurant": "restaurants",
+    "gas": "gas", "fuel": "gas",
+    "health insurance": "health-insurance", "insurance": "health-insurance",
+    "life insurance": "life-insurance",
+    "car insurance sinking fund": "car-insurance-sinking", "car insurance": "car-insurance-sinking",
+    "medical financing": "medical-financing",
+    "providence payment plan": "providence-plan", "providence": "providence-plan",
+    "ui health payment plan": "ui-health-plan", "ui health": "ui-health-plan",
+    "out-of-pocket medical": "oop-medical", "oop medical": "oop-medical", "medical": "oop-medical", "health": "oop-medical",
+    "elisa spend": "elisa-spend", "elisa — needs": "elisa-spend", "elisa needs": "elisa-spend", "elisa": "elisa-spend",
+    "elisa savings": "elisa-savings",
+    "sara personal care": "sara-personal-care", "personal care": "sara-personal-care",
+    "cats": "cats", "pet": "cats", "pets": "cats",
+    "pest control": "pest-control",
+    "subscriptions & digital services": "subscriptions", "subscriptions": "subscriptions",
+    "subscription": "subscriptions", "streaming": "subscriptions",
+    "known annual renewals": "annual-renewals", "annual renewals": "annual-renewals",
+    "rental tax reserve": "rental-tax-reserve",
+    "home & rental maintenance reserve": "maintenance-reserve", "maintenance reserve": "maintenance-reserve", "maintenance": "maintenance-reserve",
+    "christopher personal & fun": "christopher-fun", "christopher fun": "christopher-fun", "discretionary": "christopher-fun",
+    "sara personal & fun": "sara-fun", "sara fun": "sara-fun",
+    "extra debt payoff": "extra-debt-payoff", "debt payoff": "extra-debt-payoff", "financing": "extra-debt-payoff",
+    "emergency savings": "emergency-savings", "emergency fund": "emergency-savings",
+    "investing": "investing", "investment": "investing",
+    "unassigned buffer": "buffer", "buffer": "buffer"
+  };
+
+  // Description substring rules (first match wins). Manual-review merchants stay null.
+  const MANUAL_REVIEW_MERCHANTS = ["amazon", "amzn", "walmart", "wal-mart", "costco", "sam's", "sams club", "sam's club"];
+  const ORDERED_TRANSACTION_RULES = [
+    { re: /\b(providence)\b/i, id: "providence-plan" },
+    { re: /\b(ui\s*health|university of iowa)\b/i, id: "ui-health-plan" },
+    { re: /\b(mortgage|loandepot|rocket mortgage|kc mortgage)\b/i, id: "mortgage" },
+    { re: /\b(rent|tenant|el paso)\b/i, id: "el-paso-rent" },
+    { re: /\b(verizon|t-?mobile|at&t|att wireless|mint mobile)\b/i, id: "mobile-phone" },
+    { re: /\b(spectrum|comcast|xfinity|google fiber|cox)\b/i, id: "home-internet" },
+    { re: /\b(electric|power co|water bill|utility|utilities|pg&e|kcp&l|evergy)\b/i, id: "household-utilities" },
+    { re: /\b(grocery|grocer|aldi|trader joe|whole foods|kroger|hy-?vee|safeway|food lion)\b/i, id: "groceries" },
+    { re: /\b(restaurant|cafe|coffee|starbucks|mcdonald|chipotle|dining|doordash|ubereats|grubhub)\b/i, id: "restaurants" },
+    { re: /\b(shell|bp\b|exxon|chevron|gas station|fuel|casey'?s|qt\b|quiktrip)\b/i, id: "gas" },
+    { re: /\b(health insurance|blue cross|aetna|cigna|unitedhealthcare|uhc)\b/i, id: "health-insurance" },
+    { re: /\b(life insurance|northwestern mutual|new york life)\b/i, id: "life-insurance" },
+    { re: /\b(geico|progressive|state farm|allstate|car insurance|auto insurance)\b/i, id: "car-insurance-sinking" },
+    { re: /\b(pharmacy|cvs|walgreens|rite aid|doctor|dental|medical|hospital|urgent care)\b/i, id: "oop-medical" },
+    { re: /\b(elisa)\b/i, id: "elisa-spend" },
+    { re: /\b(pest|orkin|terminix)\b/i, id: "pest-control" },
+    { re: /\b(cat|petco|petsmart|vet\b|veterinary)\b/i, id: "cats" },
+    { re: /\b(netflix|hulu|spotify|disney\+|apple\.com\/bill|google\s*storage|subscription|gym)\b/i, id: "subscriptions" },
+    { re: /\b(vanguard|fidelity|schwab|robinhood|invest)\b/i, id: "investing" },
+    { re: /\b(savings transfer|emergency fund)\b/i, id: "emergency-savings" }
+  ];
+
+  function normCatKey(s) {
+    return String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+  }
+  function isManualReviewMerchant(desc) {
+    const d = String(desc || "").toLowerCase();
+    return MANUAL_REVIEW_MERCHANTS.some(m => d.includes(m));
+  }
+  function envelopeName(id) {
+    return id && ENVELOPE_NAME_BY_ID[id] ? ENVELOPE_NAME_BY_ID[id] : "";
+  }
+  function envelopeKind(id) {
+    return id && ENVELOPE_BY_ID[id] ? ENVELOPE_BY_ID[id].kind : null;
+  }
+  // Resolve category text + description → { envelopeId, category, needsReview, why }.
+  // Transfers / income / card payments get null envelopeId (not envelope spending).
+  function resolveEnvelopeAssignment({ description, category, type } = {}) {
+    const desc = String(description || "");
+    const cat = String(category || "").trim();
+    const t = String(type || "");
+
+    if (t === "card_payment" || t === "income" || normCatKey(cat) === "transfer" || normCatKey(cat) === "income" || normCatKey(cat) === "refund") {
+      return { envelopeId: null, category: cat || (t === "card_payment" ? "Transfer" : cat), needsReview: false, why: "non-spend type" };
+    }
+    if (isManualReviewMerchant(desc)) {
+      return { envelopeId: null, category: cat, needsReview: true, why: "mixed merchant — needs human pick" };
+    }
+    if (cat) {
+      const mapped = LEGACY_CATEGORY_MAP[normCatKey(cat)];
+      if (mapped) return { envelopeId: mapped, category: envelopeName(mapped) || cat, needsReview: false, why: "category map" };
+      // already a stable id?
+      if (ENVELOPE_BY_ID[cat]) return { envelopeId: cat, category: envelopeName(cat), needsReview: false, why: "envelope id" };
+    }
+    for (const rule of ORDERED_TRANSACTION_RULES) {
+      if (rule.re.test(desc)) {
+        return { envelopeId: rule.id, category: cat || envelopeName(rule.id), needsReview: false, why: "description rule" };
+      }
+    }
+    if (cat) return { envelopeId: null, category: cat, needsReview: true, why: "uncategorized label" };
+    return { envelopeId: null, category: "", needsReview: true, why: "no match" };
+  }
+  function previewEnvelopeRemap(ledger) {
+    const rows = Array.isArray(ledger) ? ledger : [];
+    return rows.map(e => {
+      const has = Object.prototype.hasOwnProperty.call(e, "envelopeId") && e.envelopeId != null && e.envelopeId !== "";
+      if (has) {
+        return {
+          id: e.id, date: e.date, description: e.description, amount: e.amount, type: e.type,
+          fromCategory: e.category || "", toCategory: e.category || "",
+          envelopeId: e.envelopeId, action: "keep", why: "already stamped", needsReview: false
+        };
+      }
+      const r = resolveEnvelopeAssignment({ description: e.description, category: e.category, type: e.type });
+      const action = r.envelopeId ? "map" : (r.needsReview ? "review" : "skip");
+      return {
+        id: e.id, date: e.date, description: e.description, amount: e.amount, type: e.type,
+        fromCategory: e.category || "", toCategory: r.category || e.category || "",
+        envelopeId: r.envelopeId, action, why: r.why, needsReview: !!r.needsReview
+      };
+    });
+  }
+  function applyEnvelopeRemap(db, decisions) {
+    // decisions: [{ id, envelopeId, category, apply: true/false }]
+    let n = 0;
+    const byId = Object.fromEntries((decisions || []).map(d => [d.id, d]));
+    for (const e of db.ledger) {
+      const d = byId[e.id];
+      if (!d || d.apply === false) continue;
+      if (Object.prototype.hasOwnProperty.call(e, "envelopeId") && e.envelopeId != null && e.envelopeId !== "") continue;
+      e.envelopeId = d.envelopeId == null ? null : d.envelopeId;
+      if (d.category != null && d.category !== "") e.category = d.category;
+      n++;
+    }
+    return n;
+  }
+
   return {
     r2, todayStr, toDate, toStr, addDays, daysBetween, addMonthsAnchored,
     asOf, effectiveNextPayday, spendableChecking, savingsBackup,
@@ -1208,7 +1390,10 @@ const STS = (() => {
     windowFlows, safeToSpend, projection,
     missingRecurring, instanceEvent, debtPaydownEvent, instanceEvents, occurrences,
     parseCSV, parseDateLoose, parseAmountLoose, normalizeCsv, classifyImport,
-    overduePendingOut, stalePending, computeAll
+    overduePendingOut, stalePending, computeAll,
+    ENVELOPE_DEFS, ENVELOPE_BY_ID, ENVELOPE_NAME_BY_ID, LEGACY_CATEGORY_MAP,
+    resolveEnvelopeAssignment, previewEnvelopeRemap, applyEnvelopeRemap,
+    envelopeName, envelopeKind, isManualReviewMerchant
   };
 })();
 /*ENGINE-END*/
@@ -1540,7 +1725,9 @@ function renderQuickAddOptions() {
     + spendableAccounts().map(a => `<option value="acct:${esc(a.name)}">🏦 ${esc(a.name)}</option>`).join("");
   if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
   if (!$("qaDate").value) $("qaDate").value = STS.asOf(DB);
-  $("catList").innerHTML = [...new Set(DB.ledger.map(e => e.category).filter(Boolean))].map(c => `<option value="${esc(c)}">`).join("");
+  const cats = new Set(STS.ENVELOPE_DEFS.map(e => e.name));
+  DB.ledger.forEach(e => { if (e.category) cats.add(e.category); });
+  $("catList").innerHTML = [...cats].sort((a, b) => a.localeCompare(b)).map(c => `<option value="${esc(c)}">`).join("");
 }
 function quickAdd() {
   const desc = $("qaDesc").value.trim();
@@ -1566,8 +1753,11 @@ function quickAdd() {
       ? { type: "card_purchase", amount: -Math.abs(amt), dest: wName, cardName: wName, payMethod: "Card", cashImpact: false }
       : { type: "cash_expense", amount: -Math.abs(amt), source: wName, payMethod: "Debit", cashImpact: true };
   }
+  const catIn = $("qaCat").value.trim() || "";
+  const assign = STS.resolveEnvelopeAssignment({ description: desc, category: catIn, type: e.type });
   DB.ledger.push({
-    id: useId(), date, description: desc, category: $("qaCat").value.trim() || "",
+    id: useId(), date, description: desc, category: assign.category || catIn,
+    envelopeId: assign.envelopeId,
     source: "", dest: "", cardName: "", mandatory: false, status: "Pending", inSTS: true, recurringId: "", notes: "",
     ...e
   });
@@ -1668,9 +1858,13 @@ function openEditEvent(id) {
       <div class="f"><span>Status</span><select id="evStatus"><option ${e.status === "Pending" ? "selected" : ""}>Pending</option><option ${e.status === "Cleared" ? "selected" : ""}>Cleared</option></select></div>
     </div>
     <div class="frow">
-      <div class="f"><span>Category</span><input id="evCat" value="${esc(e.category)}" size="14"></div>
-      <div class="f"><span>Notes</span><input id="evNotes" value="${esc(e.notes)}" size="26"></div>
+      <div class="f"><span>Category</span><input id="evCat" list="catList" value="${esc(e.category)}" size="14"></div>
+      <div class="f"><span>Envelope</span>
+        <select id="evEnv"><option value="">— unassigned / review —</option>${STS.ENVELOPE_DEFS.map(x => `<option value="${esc(x.id)}" ${e.envelopeId === x.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>
+      </div>
+      <div class="f"><span>Notes</span><input id="evNotes" value="${esc(e.notes || "")}" size="26"></div>
     </div>
+    <p class="hint" style="margin-top:6px">Envelope id is stamped on the row. Changing it here is an explicit edit (Phase 1 allows fixing review-queue rows).</p>
     <div class="dlg-actions"><button class="ghost" onclick="closeDlg()">Cancel</button><button class="primary" id="evSave">Save</button></div>
   `);
   $("evSave").onclick = () => {
@@ -1682,6 +1876,9 @@ function openEditEvent(id) {
     e.amount = STS.r2(amt); e.type = $("evType").value;
     e.source = $("evSrc").value; e.cardName = $("evCard").value;
     e.status = $("evStatus").value; e.category = $("evCat").value.trim(); e.notes = $("evNotes").value.trim();
+    const envSel = $("evEnv").value;
+    e.envelopeId = envSel ? envSel : null;
+    if (envSel && !e.category) e.category = STS.envelopeName(envSel);
     // cash impact follows where the money moves: anything on a card except its statement payment stays on
     // the card. A card_payment with no source account isn't a cash transfer at all -- it's a debt paid down
     // by charging another card (see Recurring's "Pays down debt"), so it stays off the checking projection too.
@@ -2073,13 +2270,75 @@ function openGenerate() {
     document.querySelectorAll("[data-gen]").forEach(cb => {
       if (cb.checked) {
         const m = missing[+cb.dataset.gen];
-        STS.instanceEvents(DB, m.template, m.date).forEach(ev => DB.ledger.push({ id: useId(), ...ev }));
+        STS.instanceEvents(DB, m.template, m.date).forEach(ev => {
+          const assign = STS.resolveEnvelopeAssignment({
+            description: ev.description, category: ev.category, type: ev.type
+          });
+          DB.ledger.push({
+            id: useId(), ...ev,
+            envelopeId: assign.envelopeId,
+            category: assign.category || ev.category || ""
+          });
+        });
         n++;
       }
     });
     closeDlg();
     if (n) save();
   };
+}
+
+// ---------------- envelope remap (Phase 1) ----------------
+let envRemapRows = null;
+function previewEnvelopeRemapUi() {
+  const sugg = STS.previewEnvelopeRemap(DB.ledger);
+  envRemapRows = sugg;
+  const counts = { keep: 0, map: 0, review: 0, skip: 0 };
+  sugg.forEach(s => { counts[s.action] = (counts[s.action] || 0) + 1; });
+  const envOpts = s => {
+    const cur = s.envelopeId || "";
+    return `<option value="">— review / none —</option>` + STS.ENVELOPE_DEFS.map(x =>
+      `<option value="${esc(x.id)}" ${x.id === cur ? "selected" : ""}>${esc(x.name)}</option>`).join("");
+  };
+  $("envRemapPreview").innerHTML = `
+    <p class="hint">Preview: ${counts.map || 0} to stamp, ${counts.review || 0} need review, ${counts.keep || 0} already stamped, ${counts.skip || 0} non-spend.
+    Uncheck a row to leave it untouched. Apply writes <code>envelopeId</code> only on checked rows that are not already stamped.</p>
+    <div class="scroll-x"><table>
+      <thead><tr><th></th><th>Date</th><th>Description</th><th class="num">Amount</th><th>From</th><th>Envelope</th><th>Note</th></tr></thead>
+      <tbody>${sugg.map((s, i) => `<tr class="${s.action === "keep" ? "quiet" : ""}">
+        <td><input type="checkbox" data-envremap="${i}" ${s.action === "keep" || s.action === "skip" ? "" : "checked"} ${s.action === "keep" ? "disabled" : ""}></td>
+        <td>${fmtDate(s.date)}</td><td>${esc(s.description || "")}</td>
+        <td class="num">${fmt$(s.amount)}</td>
+        <td style="font-size:12px;color:var(--muted)">${esc(s.fromCategory || "—")}</td>
+        <td>${s.action === "keep" ? `<span class="chip dim">${esc(STS.envelopeName(s.envelopeId) || s.envelopeId || "—")}</span>`
+          : s.action === "skip" ? `<span class="chip dim">n/a</span>`
+          : `<select data-envremap-env="${i}">${envOpts(s)}</select>`}</td>
+        <td style="color:var(--muted);font-size:12px">${esc(s.why)}${s.needsReview ? " ⚠" : ""}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+    <div class="frow" style="margin-top:10px">
+      <button class="primary" type="button" id="envRemapApplyBtn">Apply selected stamps</button>
+    </div>`;
+  $("envRemapApplyBtn").onclick = applyEnvelopeRemapUi;
+}
+function applyEnvelopeRemapUi() {
+  if (!envRemapRows) { alert("Preview the remap first."); return; }
+  const decisions = [];
+  document.querySelectorAll("[data-envremap]").forEach(cb => {
+    const i = +cb.dataset.envremap;
+    const s = envRemapRows[i];
+    if (!cb.checked || cb.disabled) return;
+    const sel = document.querySelector(`[data-envremap-env="${i}"]`);
+    const envelopeId = sel ? (sel.value || null) : s.envelopeId;
+    const category = envelopeId ? (STS.envelopeName(envelopeId) || s.toCategory || s.fromCategory) : (s.toCategory || s.fromCategory || "");
+    decisions.push({ id: s.id, envelopeId, category, apply: true });
+  });
+  if (!decisions.length) { alert("Nothing selected to apply."); return; }
+  if (!confirm(`Stamp envelope id on ${decisions.length} ledger row(s)? This does not change safe-to-spend.`)) return;
+  const n = STS.applyEnvelopeRemap(DB, decisions);
+  $("envRemapPreview").innerHTML = `<p class="hint">Applied: ${n} row(s) stamped. Re-run preview anytime for remaining review items.</p>`;
+  envRemapRows = null;
+  save();
 }
 
 // ---------------- import tab ----------------
@@ -2146,7 +2405,7 @@ function doImport() {
       }
       return;
     }
-    const base = { id: useId(), date: s.date, description: s.desc, category: "", source: "", dest: "", payMethod: "", cardName: "", mandatory: false, status: "Cleared", inSTS: true, recurringId: "", notes: "imported" };
+    const base = { id: useId(), date: s.date, description: s.desc, category: "", envelopeId: null, source: "", dest: "", payMethod: "", cardName: "", mandatory: false, status: "Cleared", inSTS: true, recurringId: "", notes: "imported" };
     if (impTarget.kind === "card") {
       const card = impTarget.name;
       if (type === "card_payment") {
@@ -2166,6 +2425,10 @@ function doImport() {
         Object.assign(base, { type, amount: STS.r2(s.amount), source: acct, payMethod: "Debit", cashImpact: true });
       }
     }
+    // Stamp envelopeId once at creation (design §3.3 / §8). Transfers stay null.
+    const assign = STS.resolveEnvelopeAssignment({ description: base.description, category: base.category, type: base.type });
+    base.envelopeId = assign.envelopeId;
+    if (assign.category) base.category = assign.category;
     DB.ledger.push(base); added++;
   });
   $("impPreview").innerHTML = `<p class="hint">Done: ${added} added, ${cleared} reconciled against pending items, ${skipped} skipped.</p>`;
@@ -2264,6 +2527,8 @@ document.addEventListener("DOMContentLoaded", () => {
   $("addRecurringBtn").addEventListener("click", () => openEditRecurring(-1));
   $("genRecurringBtn").addEventListener("click", openGenerate);
   $("impPreviewBtn").addEventListener("click", previewImport);
+  const envRemapBtn = $("envRemapPreviewBtn");
+  if (envRemapBtn) envRemapBtn.addEventListener("click", previewEnvelopeRemapUi);
   $("exportBtn").addEventListener("click", exportJson);
   $("importJson").addEventListener("change", e => { if (e.target.files[0]) importJson(e.target.files[0]); e.target.value = ""; });
   $("resetBtn").addEventListener("click", resetSeed);
