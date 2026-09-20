@@ -1,7 +1,7 @@
 # Envelopes — design doc
 
-**Status:** Draft for review (rev 2 — addresses code-agent review of 2026-09-20)
-**Date:** 2026-09-19 / rev 2026-09-20
+**Status:** Draft for review (rev 2.1 — incorporates Christopher's §13 answers + code-agent rev-2 corrections)
+**Date:** 2026-09-19 / rev 2 2026-09-20 / rev 2.1 2026-09-20
 **Author:** Spec (assistant) — incorporates review feedback from the repo's main code agent
 **Target:** `docs/envelopes-design.md` in `cbellosoto/FinanceManager`, then phased PRs
 
@@ -28,7 +28,7 @@ The adopted household budget (Christopher + Sara, 2026-09-19). Both phases total
 
 | id | Envelope | Phase 1 | Phase 2 | Kind | Funded by |
 |---|---|---:|---:|---|---|
-| `mortgage` | Mortgage | 1189.29 | 1189.29 | fixed | recurring (derived) |
+| `mortgage` | KC Mortgage | 1189.29 | 1189.29 | fixed | recurring (derived) |
 | `el-paso-rent` | El Paso Rent | 800.00 | 800.00 | fixed | recurring (derived) |
 | `mobile-phone` | Mobile Phone | 71.81 | 71.81 | fixed | recurring (derived) |
 | `home-internet` | Home Internet | 35.34 | 35.34 | fixed | recurring (derived) |
@@ -128,12 +128,12 @@ Ledger rows carry `envelopeId` (a stable id from §2), assigned exactly once:
 
 | Event | Trigger | Covers (Phase 1, biweekly) | Amount/event |
 |---|---|---|---|
-| Paycheck funding | each payday | variable ($2,602/mo) + car-insurance sinking ($50) + annual renewals ($27) + emergency ($300) + investing ($300) + buffer ($77.57) = **$3,356.57/mo** | **$1,549.18** |
-| Rent funding | each rent receipt | rental-tax reserve ($300) + maintenance reserve ($100) = **$400/mo** | **$200.00 per receipt** |
+| Paycheck funding | each payday | variable ($2,602/mo) + car-insurance sinking ($50) + annual renewals ($27) + emergency ($300) + investing ($300) + buffer ($77.57) = **$3,356.57/mo** | **$1,549.19** |
+| Rent funding | each rent receipt | rental-tax reserve ($300) + maintenance reserve ($100) = **$400/mo** | **$100.00 per receipt** (~4 receipts/mo) |
 
-> **Assumption (needs confirmation):** two $850/mo rent receipts → $200 each = $400/mo total. If there is a single monthly receipt, fund $400 on that one receipt instead. See open decision §13.4.
+> **Confirmed (Christopher, 2026-09-20):** two parties, each paying twice a month → ~4 deposits/mo of ~$425 (sometimes ~$450 when the tenants' Spectrum internet reimbursement is included). **$100 funded per receipt = $400/mo total** toward the two rental sinking funds. The occasional +$25 internet top-up is income noise, not an extra funding event. A month with fewer than 4 receipts simply under-funds that month — visible in the funding log, no catch-up magic.
 
-Affordability check (Phase 1, biweekly): paycheck $2,215.38 ≥ $1,549.18 ✓; rent $1,700 ≥ $400 + mortgage handled by its recurring row ✓. Envelopes never run ahead of their income source.
+Affordability check (Phase 1, biweekly): paycheck $2,215.38 ≥ $1,549.19 ✓; rent ~$1,700 ≥ $400 ✓ (KC Mortgage is a fixed derived envelope on the household side, handled by its recurring row). Envelopes never run ahead of their income source.
 
 Phase 2 paycheck event (biweekly): $3,591.98/mo → **$1,657.84**. Rent event unchanged.
 
@@ -151,7 +151,7 @@ remainder = target − Σ cents_i                      // typically −2¢…+2�
 
 `remainder` is distributed 1¢ at a time to envelopes in **ascending stable-id order** — deterministic, no float drift, same result on every run.
 
-**Invariant:** Σ per-envelope event amounts == event total, exactly, on every funding event. (Check: Phase 1 paycheck, biweekly: round(335657 × 12 / 26) = 154918¢ = $1,549.18 ✓.)
+**Invariant:** Σ per-envelope event amounts == event total, exactly, on every funding event. (Check: Phase 1 paycheck, biweekly: event total = round(335657 × 12 / 26) = 154919¢ = **$1,549.19**; Σ per-envelope = 154918¢, so the 1¢ remainder goes to the first envelope in id order → $1,549.19 ✓.)
 
 ## 5. Fixed vs. funded envelopes (the double-counting rule)
 
@@ -187,7 +187,7 @@ fundingEvents: [
 
 - **Idempotency key: `(eventType, sourceId ?? date)`.** `fundPaycheck` / `fundRent` re-read the log immediately before writing; a matching event makes the tap a **no-op** that reports "already funded" instead of double-funding.
 - **Same-date collision:** two rent receipts can share a date, so `(eventType, date)` alone is not a safe key — that is what `sourceId` is for. The fund UI lists candidate sources (deposit rows / receipt dates) with their funded state; funding an already-funded source is blocked, and a sourceless manual tap on an already-funded date warns instead of writing.
-- **Concurrency:** one JSON blob, last-write-wins — the app has no locking. The defense is read → check-log → write, with the idempotency check running against the fresh read. A double-tap or a second client repeating the same event is a no-op, not a double-fund.
+- **Concurrency:** the server (`api/data.php`) does optimistic versioning — it rejects stale writes with **409** when `baseVersion` ≠ current version, and `syncToServer` already surfaces that as a "reload to see the latest" banner. Funding must: 1. read the fresh blob + version, 2. check the funding log, 3. save with `baseVersion`, 4. on 409 → reload and re-check the log (**do not overwrite**). A repeat after reload is a no-op, not a double-fund.
 - The Envelopes tab shows the funding log. No silent state changes.
 
 ## 8. Categorization (implementation Phase 1)
@@ -211,6 +211,7 @@ row.envelopeId != null
 AND row.type ∈ {"card_purchase", "cash_expense", "recurring", "refund"}
 AND row.status ∈ {"Cleared", "Pending"}        // explicit allowlist — "Void" never counts
 AND row.date ≥ envelopeEpoch                    // §3.2 — history never consumes new balances
+AND kind(row.envelopeId) ≠ "fixed"              // fixed envelopes never enter the funded spent table — see below
 AND cycleStart ≤ row.date < cycleEnd            // half-open — each row belongs to exactly one cycle
 AND NOT (row.type == "recurring" AND row.date > today AND row.status == "Pending")
                                                 // future/planned recurring projections aren't spending yet
@@ -219,6 +220,7 @@ AND NOT (row.type == "recurring" AND row.date > today AND row.status == "Pending
   - `spent(id) = Σ −row.amount` over matching rows. Refunds (`type: "refund"`, positive amounts, stamped with the original envelope where identifiable) add back naturally.
   - `card_payment` rows — statement payments (`category: "Transfer"`) and debt-paydown movements (`debtPaydownEvent`: `cashImpact: false`, `inSTS: false`) — are excluded by the type allowlist. The original purchases already counted; the payment must not count again.
   - `income` and `planned_spend` rows never count.
+  - **Fixed envelopes have no `funded` / `spent` / `remaining`.** Their paid/not-paid status and next due date are derived separately from the recurring schedule (§5). Even if a fixed bill's generated recurring row carries an `envelopeId` for categorization, the `kind ≠ "fixed"` guard keeps it out of the funded spent table.
   - Cycle bounds reuse the existing `effectiveNextPayday` — envelopes do not reimplement payday math.
 - **Cycle** = payday-to-payday, half-open `[cycleStart, cycleEnd)`.
 - Mobile: Envelopes takes a bottom-bar slot; Accounts moves behind More (Envelopes is the check-before-swiping lookup; Accounts is set-and-forget).
@@ -263,16 +265,16 @@ Ground rules for every PR:
 
 - Engine changes stay inside the `ENGINE-START` / `ENGINE-END` markers.
 - No reformatting of untouched code.
-- **Envelope code must not change the outputs of the engine's existing functions** — the safe-to-spend totals (`safeToSpend`, `cardOwedNow`, `cardFunded`, `cardUnfunded`, `totalUnfunded`), the projection path (`projection`, `windowFlows`, `effectiveNextPayday`, `occurrences`, `missingRecurring`, `instanceEvents`), or the balance/account path (`spendableChecking`, `savingsBackup`, `accountBalanceNow`, `cardNewActivity`, `accountNewActivity`, `stalePending`, `overduePendingOut`). Envelope math lives in new pure functions; existing functions are called, never edited. Any behavioral change to a listed function is called out explicitly in the PR description.
+- **Envelope code must not change the outputs of the engine's existing functions** — the safe-to-spend totals (`safeToSpend`, `computeAll`, `cardOwedNow`, `cardFunded`, `cardUnfunded`, `totalUnfunded`), the projection path (`projection`, `windowFlows`, `countsInWindow`, `effectiveNextPayday`, `occurrences`, `missingRecurring`, `instanceEvents`), or the balance/account path (`spendableChecking`, `savingsBackup`, `accountBalanceNow`, `cardNewActivity`, `accountNewActivity`, `stalePending`, `overduePendingOut`). Envelope math lives in new pure functions; existing functions are called, never edited. Any behavioral change to a listed function is called out explicitly in the PR description.
 - **Never test against production.** `sts2` holds real data. Test by opening `index.html` directly (it falls back to localStorage) and importing the 2026-09-19 backup. A staging environment is a separate subdomain with its own database — not a second door into the same one.
 - Merge and deploy handled by the repo's code agent after review.
 
-## 13. Open decisions for Christopher
+## 13. Decisions (resolved 2026-09-20 unless noted)
 
-1. Confirm the 30 canonical envelope names in §2 (display labels; ids are stable regardless).
-2. Which property the $1,189.29 mortgage belongs to (affects the rental-lane framing in the funding checklist).
-3. Mobile tab placement — recommendation in §9 is Envelopes in the bottom bar, Accounts behind More.
-4. Rent receipt cadence and amounts — §4 assumes two $850/mo receipts at $200 each ($400/mo total). Confirm: two receipts or one, and whether the $850 figures are gross or net.
+1. ✅ **30 canonical names confirmed** — Christopher's Phase 1 table matches the doc exactly ($6,499.99, 30 rows). One display-label change: `mortgage` → **"KC Mortgage"** (§2). Ids are stable regardless.
+2. ✅ **Mortgage = KC property.** The $1,189.29 mortgage belongs to the KC property. It stays a fixed derived envelope on the household side (§5); the rental lane is the rent funding event → tax/maintenance reserves.
+3. ⏳ **Mobile tab placement — awaiting Christopher's confirmation.** Recommendation (§9) stands: Envelopes in the bottom bar, Accounts behind More (current bar: Home | Ledger | Cards | Accounts | More; Accounts is set-and-forget, envelope check-before-swipe is high-frequency).
+4. ✅ **Rent cadence confirmed** — two parties, each paying twice a month → ~4 deposits/mo of ~$425 (sometimes ~$450 with the Spectrum internet reimbursement). **$100 funded per receipt = $400/mo.** The +$25 top-up is income noise, not a funding event (§4).
 
 ---
 
@@ -286,3 +288,13 @@ Ground rules for every PR:
 6. **Deterministic rounding** — §4.1: integer-cents allocation, remainder to ascending-id order, Σ == event total invariant.
 7. **Review queue** — §9.1: uncategorized rows counted and bannered; remaining never presented as final while the queue is non-empty.
 8. **Engine guardrails** — §12: named function list (headline, projection, and balance paths); §10 adds a `safeToSpend` byte-identical regression test.
+
+## Rev 2.1 changelog (2026-09-20, Christopher's §13 answers + code-agent corrections)
+
+- **A. Paycheck event total corrected: $1,549.19** (was $1,549.18). `round(335657 × 12 / 26) = 154919¢`; Σ per-envelope = 154918¢, 1¢ remainder → first envelope by id order. §4 table, affordability check, and §4.1 invariant example fixed. (My rev-2 arithmetic was off by 1¢ — recomputed from the §2 monthlies this round.)
+- **B. Concurrency corrected: optimistic versioning, not last-write-wins.** §7 now specifies the `baseVersion` / 409 flow — `api/data.php` rejects stale writes with 409 and `syncToServer` surfaces the reload banner. Verified against the code.
+- **C. Rent funding rewritten: 4 × ~$100** (§4, §13.4). Two parties × twice monthly, ~$425 deposits (~$450 with Spectrum); $100/receipt = $400/mo; source-keyed idempotency is what makes 4 same-month sources safe.
+- **D. Fixed-envelope spent clarification** (§9): `kind ≠ "fixed"` guard in the spent predicate; fixed envelopes have no funded/spent/remaining — paid/not-paid derives from the recurring schedule.
+- **E. Guardrails + `computeAll`, `countsInWindow`** (§12).
+- **Display name: "KC Mortgage"** (§2); mortgage = KC property, household side (§13.2).
+- §13.3 (mobile tab placement) remains open pending Christopher's confirmation.
