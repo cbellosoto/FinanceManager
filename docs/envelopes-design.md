@@ -273,7 +273,7 @@ Ground rules for every PR:
 
 1. ✅ **30 canonical names confirmed** — Christopher's Phase 1 table matches the doc exactly ($6,499.99, 30 rows). One display-label change: `mortgage` → **"KC Mortgage"** (§2). Ids are stable regardless.
 2. ✅ **Mortgage = KC property.** The $1,189.29 mortgage belongs to the KC property. It stays a fixed derived envelope on the household side (§5); the rental lane is the rent funding event → tax/maintenance reserves.
-3. ⏳ **Mobile tab placement — awaiting Christopher's confirmation.** Recommendation (§9) stands: Envelopes in the bottom bar, Accounts behind More (current bar: Home | Ledger | Cards | Accounts | More; Accounts is set-and-forget, envelope check-before-swipe is high-frequency).
+3. ✅ **Mobile tab placement confirmed (2026-09-20).** Envelopes in the bottom bar, Accounts behind More (current bar: Home | Ledger | Cards | Accounts | More).
 4. ✅ **Rent cadence confirmed** — two parties, each paying twice a month → ~4 deposits/mo of ~$425 (sometimes ~$450 with the Spectrum internet reimbursement). **$100 funded per receipt = $400/mo.** The +$25 top-up is income noise, not a funding event (§4).
 
 ---
@@ -297,4 +297,4 @@ Ground rules for every PR:
 - **D. Fixed-envelope spent clarification** (§9): `kind ≠ "fixed"` guard in the spent predicate; fixed envelopes have no funded/spent/remaining — paid/not-paid derives from the recurring schedule.
 - **E. Guardrails + `computeAll`, `countsInWindow`** (§12).
 - **Display name: "KC Mortgage"** (§2); mortgage = KC property, household side (§13.2).
-- §13.3 (mobile tab placement) remains open pending Christopher's confirmation.
+- §13.3 (mobile tab placement) confirmed 2026-09-20: Envelopes in the bottom bar, Accounts behind More. All §13 decisions resolved.
