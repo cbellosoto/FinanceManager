@@ -247,7 +247,7 @@ The repo has no tests. The envelope math is pure functions, so add a small test 
 - **Rounding:** Σ per-envelope amounts == event total for divisor variants (52/26/24/12); deterministic across runs.
 - **Spent eligibility:** `card_payment` (statement + debt-paydown), `Transfer`, future/planned recurring rows, and `Void` rows never reduce an envelope.
 - **Review queue:** an uncategorized row increments count/total and triggers the banner; it doesn't inflate any remaining.
-- **Regression:** `safeToSpend` output is byte-identical before/after the envelope code loads, in both Phase 1 and Phase 2 dashboard modes. Envelope work must not move the headline number.
+- **Regression:** `safeToSpend` output is byte-identical before/after the envelope code loads, in all dashboard modes (Conservative/Moderate/Aggressive). Envelope work must not move the headline number.
 - Double-fund is a no-op; fixed envelopes derive from recurring and never take funding.
 
 ## 11. Phase 3 — deferred
