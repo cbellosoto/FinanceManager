@@ -103,7 +103,11 @@
     border-radius: 10px; padding: 10px 14px; margin-top: 12px; font-size: 14px;
   }
   .banner.warn { background: var(--warn-bg); color: var(--warn-text); }
+  .banner.bad { background: var(--bad-bg); color: var(--bad-text); }
   .banner button { flex-shrink: 0; }
+  .env-bar { height: 6px; background: var(--hairline); border-radius: 99px; overflow: hidden; min-width: 72px; }
+  .env-bar > i { display: block; height: 100%; background: var(--accent); max-width: 100%; }
+  .env-bar.over > i { background: var(--bad-text); width: 100%; }
   .note { color: var(--muted); font-size: 12.5px; margin-top: 10px; }
   /* ---- runway ---- */
   details.runway { margin-top: 14px; }
@@ -343,6 +347,7 @@
   <nav class="tabs" id="tabRow">
     <button data-tab="ledger">Ledger</button>
     <button data-tab="cards">Cards</button>
+    <button data-tab="envelopes">Envelopes</button>
     <button data-tab="accounts">Accounts</button>
     <button data-tab="recurring">Recurring</button>
     <button data-tab="import">Import CSV</button>
@@ -439,6 +444,60 @@
     payment (full / minimum / custom, per autopay) — which then shows under <b>Scheduled to pay</b>. Leave the payment
     <b>Scheduled</b> to queue it, or set it <b>Already paid</b> once the cash has actually left checking; set a
     <i>Payment date</i> earlier than the due date if you pay ahead.</p>
+  </section>
+
+  <section class="panel card" id="panel-envelopes">
+    <h2>Envelopes</h2>
+    <p class="hint">Budget layer over the ledger — remaining is always <b>funded − spent</b>, never a stored balance.
+    Safe-to-spend is unchanged. Fixed bills are derived from Recurring (not funded here).</p>
+    <div class="modes" id="envPhaseRow" role="group" aria-label="Budget phase">
+      <button type="button" data-envphase="1">Phase 1 — debt payoff</button>
+      <button type="button" data-envphase="2">Phase 2 — debts cleared</button>
+    </div>
+    <div id="envReviewBanner"></div>
+    <div class="frow" style="margin-top:12px">
+      <div class="f"><span>Funded through</span><div id="envFundedThrough" style="font-weight:600">—</div></div>
+      <button class="primary" type="button" id="envFundPaycheckBtn">Fund paycheck</button>
+      <button class="ghost" type="button" id="envFundRentBtn">Fund rent receipt</button>
+    </div>
+    <p class="hint" id="envCycleLine"></p>
+    <h2 style="margin-top:18px">Funded envelopes</h2>
+    <div class="scroll-x">
+      <table>
+        <thead id="envHead"><tr>
+          <th data-sort="name">Envelope<span class="sort-arrow" data-key="name"></span></th>
+          <th class="num" data-sort="monthly">Monthly<span class="sort-arrow" data-key="monthly"></span></th>
+          <th class="num" data-sort="perEvent">Per event<span class="sort-arrow" data-key="perEvent"></span></th>
+          <th class="num" data-sort="funded">Funded<span class="sort-arrow" data-key="funded"></span></th>
+          <th class="num" data-sort="spent">Spent (cycle)<span class="sort-arrow" data-key="spent"></span></th>
+          <th class="num" data-sort="remaining">Remaining<span class="sort-arrow" data-key="remaining"></span></th>
+          <th data-sort="bar">bar</th>
+        </tr></thead>
+        <tbody id="envBody"></tbody>
+      </table>
+    </div>
+    <h2 style="margin-top:18px">Fixed bills (derived)</h2>
+    <p class="hint">These already sit in Recurring / the projection. No funding action, no remaining to spend.</p>
+    <div class="scroll-x">
+      <table>
+        <thead><tr>
+          <th>Envelope</th>
+          <th class="num">Monthly</th>
+          <th>Next due</th>
+          <th>This cycle</th>
+        </tr></thead>
+        <tbody id="envFixedBody"></tbody>
+      </table>
+    </div>
+    <h2 style="margin-top:18px">Funding log</h2>
+    <div class="scroll-x">
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Event</th><th>Phase</th><th class="num">Total</th><th>Source</th>
+        </tr></thead>
+        <tbody id="envLogBody"></tbody>
+      </table>
+    </div>
   </section>
 
   <section class="panel card" id="panel-accounts">
@@ -596,9 +655,9 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
     <span>Cards</span>
   </button>
-  <button class="bt-btn" data-tab="accounts">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><circle cx="16" cy="13" r="1.6"/></svg>
-    <span>Accounts</span>
+  <button class="bt-btn" data-tab="envelopes">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z"/><path d="M8 7V5.5A2.5 2.5 0 0 1 10.5 3h3A2.5 2.5 0 0 1 16 5.5V7"/><path d="M4 12h16"/></svg>
+    <span>Envelopes</span>
   </button>
   <button class="bt-btn" id="moreTabBtn">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18" cy="12" r="1.6"/></svg>
@@ -610,6 +669,7 @@
 <dialog id="moreDlg">
   <h3>More</h3>
   <div>
+    <button class="sheet-item" data-tab="accounts">Accounts</button>
     <button class="sheet-item" data-tab="recurring">Recurring bills &amp; income</button>
     <button class="sheet-item" data-tab="import">Import CSV</button>
     <button class="sheet-item" data-tab="backup">Backup &amp; restore</button>
@@ -1212,36 +1272,36 @@ const STS = (() => {
   // ---------- Envelope categorization (Phase 1) ----------
   // Stable ids from docs/envelopes-design.md §2. Spent math (Phase 2) reads row.envelopeId only.
   const ENVELOPE_DEFS = [
-    { id: "mortgage", name: "KC Mortgage", kind: "fixed" },
-    { id: "el-paso-rent", name: "El Paso Rent", kind: "fixed" },
-    { id: "mobile-phone", name: "Mobile Phone", kind: "fixed" },
-    { id: "home-internet", name: "Home Internet", kind: "fixed" },
-    { id: "household-utilities", name: "Household Utilities", kind: "variable" },
-    { id: "groceries", name: "Groceries", kind: "variable" },
-    { id: "restaurants", name: "Restaurants", kind: "variable" },
-    { id: "gas", name: "Gas", kind: "variable" },
-    { id: "health-insurance", name: "Health Insurance", kind: "fixed" },
-    { id: "life-insurance", name: "Life Insurance", kind: "fixed" },
-    { id: "car-insurance-sinking", name: "Car Insurance Sinking Fund", kind: "sinking" },
-    { id: "medical-financing", name: "Medical Financing", kind: "paused" },
-    { id: "providence-plan", name: "Providence Payment Plan", kind: "fixed" },
-    { id: "ui-health-plan", name: "UI Health Payment Plan", kind: "fixed" },
-    { id: "oop-medical", name: "Out-of-Pocket Medical", kind: "variable" },
-    { id: "elisa-spend", name: "Elisa Spend", kind: "variable" },
-    { id: "elisa-savings", name: "Elisa Savings", kind: "fixed" },
-    { id: "sara-personal-care", name: "Sara Personal Care", kind: "variable" },
-    { id: "cats", name: "Cats", kind: "variable" },
-    { id: "pest-control", name: "Pest Control", kind: "variable" },
-    { id: "subscriptions", name: "Subscriptions & Digital Services", kind: "variable" },
-    { id: "annual-renewals", name: "Known Annual Renewals", kind: "sinking" },
-    { id: "rental-tax-reserve", name: "Rental Tax Reserve", kind: "sinking" },
-    { id: "maintenance-reserve", name: "Home & Rental Maintenance Reserve", kind: "sinking" },
-    { id: "christopher-fun", name: "Christopher Personal & Fun", kind: "variable" },
-    { id: "sara-fun", name: "Sara Personal & Fun", kind: "variable" },
-    { id: "extra-debt-payoff", name: "Extra Debt Payoff", kind: "goal" },
-    { id: "emergency-savings", name: "Emergency Savings", kind: "goal" },
-    { id: "investing", name: "Investing", kind: "goal" },
-    { id: "buffer", name: "Unassigned Buffer", kind: "buffer" }
+    { id: "mortgage", name: "KC Mortgage", kind: "fixed", monthly1: 1189.29, monthly2: 1189.29, fundedBy: "recurring" },
+    { id: "el-paso-rent", name: "El Paso Rent", kind: "fixed", monthly1: 800.00, monthly2: 800.00, fundedBy: "recurring" },
+    { id: "mobile-phone", name: "Mobile Phone", kind: "fixed", monthly1: 71.81, monthly2: 71.81, fundedBy: "recurring" },
+    { id: "home-internet", name: "Home Internet", kind: "fixed", monthly1: 35.34, monthly2: 35.34, fundedBy: "recurring" },
+    { id: "household-utilities", name: "Household Utilities", kind: "variable", monthly1: 330.00, monthly2: 330.00, fundedBy: "paycheck" },
+    { id: "groceries", name: "Groceries", kind: "variable", monthly1: 940.00, monthly2: 940.00, fundedBy: "paycheck" },
+    { id: "restaurants", name: "Restaurants", kind: "variable", monthly1: 300.00, monthly2: 400.00, fundedBy: "paycheck" },
+    { id: "gas", name: "Gas", kind: "variable", monthly1: 150.00, monthly2: 150.00, fundedBy: "paycheck" },
+    { id: "health-insurance", name: "Health Insurance", kind: "fixed", monthly1: 219.63, monthly2: 219.63, fundedBy: "recurring" },
+    { id: "life-insurance", name: "Life Insurance", kind: "fixed", monthly1: 105.27, monthly2: 105.27, fundedBy: "recurring" },
+    { id: "car-insurance-sinking", name: "Car Insurance Sinking Fund", kind: "sinking", monthly1: 50.00, monthly2: 50.00, fundedBy: "paycheck" },
+    { id: "medical-financing", name: "Medical Financing", kind: "paused", monthly1: 0, monthly2: 0, fundedBy: "" },
+    { id: "providence-plan", name: "Providence Payment Plan", kind: "fixed", monthly1: 135.41, monthly2: 0, fundedBy: "recurring" },
+    { id: "ui-health-plan", name: "UI Health Payment Plan", kind: "fixed", monthly1: 100.00, monthly2: 0, fundedBy: "recurring" },
+    { id: "oop-medical", name: "Out-of-Pocket Medical", kind: "variable", monthly1: 75.00, monthly2: 75.00, fundedBy: "paycheck" },
+    { id: "elisa-spend", name: "Elisa Spend", kind: "variable", monthly1: 150.00, monthly2: 150.00, fundedBy: "paycheck" },
+    { id: "elisa-savings", name: "Elisa Savings", kind: "fixed", monthly1: 86.67, monthly2: 86.67, fundedBy: "recurring" },
+    { id: "sara-personal-care", name: "Sara Personal Care", kind: "variable", monthly1: 150.00, monthly2: 150.00, fundedBy: "paycheck" },
+    { id: "cats", name: "Cats", kind: "variable", monthly1: 60.00, monthly2: 60.00, fundedBy: "paycheck" },
+    { id: "pest-control", name: "Pest Control", kind: "variable", monthly1: 87.00, monthly2: 87.00, fundedBy: "paycheck" },
+    { id: "subscriptions", name: "Subscriptions & Digital Services", kind: "variable", monthly1: 60.00, monthly2: 60.00, fundedBy: "paycheck" },
+    { id: "annual-renewals", name: "Known Annual Renewals", kind: "sinking", monthly1: 27.00, monthly2: 27.00, fundedBy: "paycheck" },
+    { id: "rental-tax-reserve", name: "Rental Tax Reserve", kind: "sinking", monthly1: 300.00, monthly2: 300.00, fundedBy: "rent" },
+    { id: "maintenance-reserve", name: "Home & Rental Maintenance Reserve", kind: "sinking", monthly1: 100.00, monthly2: 100.00, fundedBy: "rent" },
+    { id: "christopher-fun", name: "Christopher Personal & Fun", kind: "variable", monthly1: 150.00, monthly2: 150.00, fundedBy: "paycheck" },
+    { id: "sara-fun", name: "Sara Personal & Fun", kind: "variable", monthly1: 150.00, monthly2: 150.00, fundedBy: "paycheck" },
+    { id: "extra-debt-payoff", name: "Extra Debt Payoff", kind: "goal", monthly1: 0, monthly2: 0, fundedBy: "manual" },
+    { id: "emergency-savings", name: "Emergency Savings", kind: "goal", monthly1: 300.00, monthly2: 400.00, fundedBy: "paycheck" },
+    { id: "investing", name: "Investing", kind: "goal", monthly1: 300.00, monthly2: 400.00, fundedBy: "paycheck" },
+    { id: "buffer", name: "Unassigned Buffer", kind: "buffer", monthly1: 77.57, monthly2: 12.98, fundedBy: "paycheck" }
   ];
   const ENVELOPE_BY_ID = Object.fromEntries(ENVELOPE_DEFS.map(e => [e.id, e]));
   const ENVELOPE_NAME_BY_ID = Object.fromEntries(ENVELOPE_DEFS.map(e => [e.id, e.name]));
@@ -1382,6 +1442,291 @@ const STS = (() => {
     return n;
   }
 
+  // ---------- Envelope plan / funding / spent (Phase 2) ----------
+  // remaining = funded − spent, both derived. No stored balances (§3.1).
+  // Existing STS functions above are called, never edited.
+  const PAY_FREQ_DIVISOR = { Weekly: 52, Biweekly: 26, Semimonthly: 24, Monthly: 12 };
+  const RENT_EVENTS_PER_YEAR = 48; // ~4 receipts/mo × 12
+  const SPENT_TYPES = { card_purchase: 1, cash_expense: 1, recurring: 1, refund: 1 };
+  const SPENT_STATUSES = { Cleared: 1, Pending: 1 };
+
+  function payFrequencyDivisor(freq) {
+    return PAY_FREQ_DIVISOR[freq] || 26;
+  }
+  function envelopeMonthly(id, phase) {
+    const d = ENVELOPE_BY_ID[id];
+    if (!d) return 0;
+    return phase === 2 ? d.monthly2 : d.monthly1;
+  }
+  function monthlyByIdForEvent(eventType, phase) {
+    const out = {};
+    for (const e of ENVELOPE_DEFS) {
+      if (e.fundedBy !== eventType) continue;
+      out[e.id] = envelopeMonthly(e.id, phase);
+    }
+    return out;
+  }
+  // Integer-cents allocation (§4.1). remainder ±1¢ at a time in ascending stable-id order.
+  function allocateFundingEvent(monthlyById, divisor) {
+    const ids = Object.keys(monthlyById).sort();
+    const monthlyTotal = ids.reduce((s, id) => s + (+monthlyById[id] || 0), 0);
+    const target = Math.round(monthlyTotal * 1200 / divisor);
+    const cents = {};
+    let sum = 0;
+    for (const id of ids) {
+      const c = Math.round((+monthlyById[id] || 0) * 1200 / divisor);
+      cents[id] = c;
+      sum += c;
+    }
+    let rem = target - sum;
+    const dir = rem > 0 ? 1 : -1;
+    rem = Math.abs(rem);
+    let i = 0;
+    while (rem > 0 && ids.length) {
+      cents[ids[i % ids.length]] += dir;
+      rem--;
+      i++;
+    }
+    const amounts = {};
+    for (const id of ids) amounts[id] = cents[id] / 100;
+    return { cents, amounts, totalCents: target, total: target / 100 };
+  }
+
+  function ensureEnvelopes(db) {
+    if (!db.envelopePlan || typeof db.envelopePlan !== "object") {
+      db.envelopePlan = {
+        version: 1,
+        phase: 1,
+        envelopeEpoch: null,
+        phaseActivatedAt: {},
+        fundingEvents: []
+      };
+    }
+    const p = db.envelopePlan;
+    if (p.phase !== 1 && p.phase !== 2) p.phase = 1;
+    if (!p.phaseActivatedAt || typeof p.phaseActivatedAt !== "object") p.phaseActivatedAt = {};
+    if (!Array.isArray(p.fundingEvents)) p.fundingEvents = [];
+    if (p.envelopeEpoch === undefined) p.envelopeEpoch = null;
+    return db;
+  }
+
+  function setEnvelopePhase(db, phase, asOfD) {
+    ensureEnvelopes(db);
+    const ph = phase === 2 ? 2 : 1;
+    const p = db.envelopePlan;
+    if (p.phase !== ph) {
+      p.phase = ph;
+      if (!p.phaseActivatedAt[ph]) p.phaseActivatedAt[ph] = asOfD;
+    }
+    return p;
+  }
+
+  // Mirrors effectiveNextPayday's roll so cycleEnd === that function, capturing last as cycleStart.
+  function envelopeCycleBounds(db, asOfD) {
+    const cycleEnd = effectiveNextPayday(db, asOfD);
+    const s = db.settings;
+    let last = s.lastPayday, next = s.nextPayday, guard = 0;
+    const anchorDay = toDate(s.nextPayday).getDate();
+    while (next <= asOfD && guard++ < 1000) {
+      const nn = s.payFrequency === "Semimonthly"
+        ? addMonthsAnchored(last, 1)
+        : nextOccurrence(next, s.payFrequency, anchorDay);
+      last = next; next = nn;
+    }
+    return { cycleStart: last, cycleEnd: next };
+  }
+
+  function fundingEventKey(eventType, sourceId, date) {
+    const src = sourceId == null || sourceId === "" ? date : String(sourceId);
+    return eventType + ":" + src;
+  }
+  function findFundingEvent(plan, eventType, sourceId, date) {
+    const key = fundingEventKey(eventType, sourceId, date);
+    return (plan.fundingEvents || []).find(e => fundingEventKey(e.eventType, e.sourceId, e.date) === key) || null;
+  }
+
+  function recordFundingEvent(db, { eventType, date, sourceId, createdBy, createdAt } = {}) {
+    ensureEnvelopes(db);
+    const plan = db.envelopePlan;
+    if (eventType !== "paycheck" && eventType !== "rent") {
+      return { ok: false, reason: "unsupported event" };
+    }
+    if (!date) return { ok: false, reason: "date required" };
+    const existing = findFundingEvent(plan, eventType, sourceId, date);
+    if (existing) return { ok: false, alreadyFunded: true, reason: "already funded", event: existing };
+    const phase = plan.phase === 2 ? 2 : 1;
+    const divisor = eventType === "rent" ? RENT_EVENTS_PER_YEAR : payFrequencyDivisor(db.settings.payFrequency);
+    const alloc = allocateFundingEvent(monthlyByIdForEvent(eventType, phase), divisor);
+    if (!plan.envelopeEpoch) plan.envelopeEpoch = date;
+    if (!plan.phaseActivatedAt[phase]) plan.phaseActivatedAt[phase] = date;
+    const event = {
+      eventType, date, phase,
+      sourceId: sourceId == null || sourceId === "" ? null : sourceId,
+      amounts: alloc.amounts,
+      createdAt: createdAt || (date + "T12:00:00"),
+      createdBy: createdBy || ""
+    };
+    plan.fundingEvents.push(event);
+    return { ok: true, alreadyFunded: false, event, total: alloc.total };
+  }
+
+  function recordReallocate(db, { from, to, amount, date, createdBy, createdAt } = {}) {
+    ensureEnvelopes(db);
+    const plan = db.envelopePlan;
+    if (!from || !to || from === to) return { ok: false, reason: "from/to required" };
+    if (envelopeKind(from) === "fixed" || envelopeKind(to) === "fixed") {
+      return { ok: false, reason: "fixed envelopes are not funded" };
+    }
+    const amt = r2(Math.abs(+amount || 0));
+    if (!amt) return { ok: false, reason: "amount required" };
+    if (!date) return { ok: false, reason: "date required" };
+    if (!plan.envelopeEpoch) plan.envelopeEpoch = date;
+    const event = {
+      eventType: "reallocate", date, phase: plan.phase === 2 ? 2 : 1,
+      sourceId: null, from, to, amount: amt,
+      amounts: { [from]: -amt, [to]: amt },
+      createdAt: createdAt || (date + "T12:00:00"),
+      createdBy: createdBy || ""
+    };
+    plan.fundingEvents.push(event);
+    return { ok: true, event };
+  }
+
+  function envelopeRowCountsAsSpend(row, opts) {
+    const envelopeEpoch = opts.envelopeEpoch;
+    const cycleStart = opts.cycleStart;
+    const cycleEnd = opts.cycleEnd;
+    const asOfD = opts.asOfD;
+    const cycleOnly = opts.cycleOnly !== false;
+    if (!envelopeEpoch) return false;
+    if (!row) return false;
+    if (!SPENT_TYPES[row.type]) return false;
+    if (!SPENT_STATUSES[row.status]) return false;
+    if (row.date < envelopeEpoch) return false;
+    if (cycleOnly && !(cycleStart <= row.date && row.date < cycleEnd)) return false;
+    if (row.type === "recurring" && row.date > asOfD && row.status === "Pending") return false;
+    return true;
+  }
+
+  function envelopeFundedCents(db, id) {
+    ensureEnvelopes(db);
+    if (envelopeKind(id) === "fixed") return 0;
+    const epoch = db.envelopePlan.envelopeEpoch;
+    if (!epoch) return 0;
+    let c = 0;
+    for (const ev of db.envelopePlan.fundingEvents) {
+      if (ev.date < epoch) continue;
+      const a = ev.amounts && ev.amounts[id];
+      if (a) c += Math.round(a * 100);
+    }
+    return c;
+  }
+  function envelopeSpentCents(db, id, cycleOnly) {
+    ensureEnvelopes(db);
+    if (envelopeKind(id) === "fixed") return 0;
+    const epoch = db.envelopePlan.envelopeEpoch;
+    if (!epoch) return 0;
+    const asOfD = asOf(db);
+    const cycle = envelopeCycleBounds(db, asOfD);
+    const opts = { envelopeEpoch: epoch, cycleStart: cycle.cycleStart, cycleEnd: cycle.cycleEnd, asOfD, cycleOnly: !!cycleOnly };
+    let c = 0;
+    for (const row of db.ledger) {
+      if (row.envelopeId !== id) continue;
+      if (!envelopeRowCountsAsSpend(row, opts)) continue;
+      c += -Math.round((+row.amount || 0) * 100);
+    }
+    return c;
+  }
+  const envelopeFunded = (db, id) => r2(envelopeFundedCents(db, id) / 100);
+  const envelopeSpent = (db, id, cycleOnly) => r2(envelopeSpentCents(db, id, cycleOnly) / 100);
+  // Lifetime spent (since epoch) so remaining rolls across cycles (§6). Spent (cycle) is display-only.
+  const envelopeRemaining = (db, id) => r2((envelopeFundedCents(db, id) - envelopeSpentCents(db, id, false)) / 100);
+
+  function envelopeReviewQueue(db) {
+    ensureEnvelopes(db);
+    const epoch = db.envelopePlan.envelopeEpoch;
+    const asOfD = asOf(db);
+    const cycle = envelopeCycleBounds(db, asOfD);
+    const opts = { envelopeEpoch: epoch, cycleStart: cycle.cycleStart, cycleEnd: cycle.cycleEnd, asOfD, cycleOnly: true };
+    let count = 0, totalCents = 0;
+    if (!epoch) return { count: 0, total: 0 };
+    for (const row of db.ledger) {
+      if (row.envelopeId != null && row.envelopeId !== "") continue;
+      if (!envelopeRowCountsAsSpend(row, opts)) continue;
+      count++;
+      totalCents += -Math.round((+row.amount || 0) * 100);
+    }
+    return { count, total: r2(totalCents / 100) };
+  }
+
+  function fixedEnvelopeDerived(db, id, asOfD) {
+    const cycle = envelopeCycleBounds(db, asOfD);
+    const templates = (db.recurring || []).filter(t => {
+      const r = resolveEnvelopeAssignment({ description: t.name, category: t.category, type: "recurring" });
+      return r.envelopeId === id;
+    });
+    const nextDue = templates.map(t => t.nextDate).filter(Boolean).sort()[0] || "";
+    const ids = {};
+    templates.forEach(t => { ids[t.id] = 1; });
+    const paid = (db.ledger || []).some(e =>
+      e.status === "Cleared" &&
+      e.date >= cycle.cycleStart && e.date < cycle.cycleEnd &&
+      (e.envelopeId === id || (e.recurringId && ids[e.recurringId]))
+    );
+    return { nextDue, paid, templates };
+  }
+
+  function envelopeView(db) {
+    ensureEnvelopes(db);
+    const asOfD = asOf(db);
+    const plan = db.envelopePlan;
+    const phase = plan.phase === 2 ? 2 : 1;
+    const cycle = envelopeCycleBounds(db, asOfD);
+    const divisor = payFrequencyDivisor(db.settings.payFrequency);
+    const paycheckAlloc = allocateFundingEvent(monthlyByIdForEvent("paycheck", phase), divisor);
+    const rentAlloc = allocateFundingEvent(monthlyByIdForEvent("rent", phase), RENT_EVENTS_PER_YEAR);
+    const funded = [];
+    const fixed = [];
+    const paused = [];
+    for (const def of ENVELOPE_DEFS) {
+      if (def.kind === "fixed") {
+        fixed.push({
+          id: def.id, name: def.name, kind: def.kind,
+          monthly: envelopeMonthly(def.id, phase),
+          derived: fixedEnvelopeDerived(db, def.id, asOfD)
+        });
+        continue;
+      }
+      if (def.kind === "paused") {
+        paused.push({ id: def.id, name: def.name, kind: def.kind, monthly: envelopeMonthly(def.id, phase) });
+        continue;
+      }
+      const perEvent = def.fundedBy === "rent" ? (rentAlloc.amounts[def.id] || 0)
+        : def.fundedBy === "paycheck" ? (paycheckAlloc.amounts[def.id] || 0)
+        : 0;
+      const fundedAmt = envelopeFunded(db, def.id);
+      const spentCycle = envelopeSpent(db, def.id, true);
+      const remaining = envelopeRemaining(db, def.id);
+      funded.push({
+        id: def.id, name: def.name, kind: def.kind, fundedBy: def.fundedBy,
+        monthly: envelopeMonthly(def.id, phase),
+        perEvent, funded: fundedAmt, spentCycle, remaining,
+        over: remaining < 0
+      });
+    }
+    const log = (plan.fundingEvents || []).slice().sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
+    const lastFund = log[0];
+    return {
+      phase, asOfD, cycle, divisor,
+      paycheckTotal: paycheckAlloc.total,
+      rentTotal: rentAlloc.total,
+      fundedThrough: lastFund ? lastFund.date : null,
+      funded, fixed, paused,
+      review: envelopeReviewQueue(db),
+      log
+    };
+  }
+
   return {
     r2, todayStr, toDate, toStr, addDays, daysBetween, addMonthsAnchored,
     asOf, effectiveNextPayday, spendableChecking, savingsBackup,
@@ -1393,7 +1738,12 @@ const STS = (() => {
     overduePendingOut, stalePending, computeAll,
     ENVELOPE_DEFS, ENVELOPE_BY_ID, ENVELOPE_NAME_BY_ID, LEGACY_CATEGORY_MAP,
     resolveEnvelopeAssignment, previewEnvelopeRemap, applyEnvelopeRemap,
-    envelopeName, envelopeKind, isManualReviewMerchant
+    envelopeName, envelopeKind, isManualReviewMerchant,
+    payFrequencyDivisor, monthlyByIdForEvent, allocateFundingEvent,
+    ensureEnvelopes, setEnvelopePhase, envelopeCycleBounds,
+    fundingEventKey, findFundingEvent, recordFundingEvent, recordReallocate,
+    envelopeRowCountsAsSpend, envelopeFunded, envelopeSpent, envelopeRemaining,
+    envelopeReviewQueue, fixedEnvelopeDerived, envelopeView, envelopeMonthly
   };
 })();
 /*ENGINE-END*/
@@ -1408,6 +1758,7 @@ const GOOGLE_CLIENT_ID = "635273781660-rvgdcq7i5jn23b9fc4b69llgi1ije4b1.apps.goo
 const KEY = "safeToSpend.v1";
 const VERSION_KEY = "safeToSpend.v1.version";
 const DIRTY_KEY = "safeToSpend.v1.dirty";
+function readyDb(d) { return STS.ensureEnvelopes(STS.ensureAccountAnchors(d)); }
 let DB = null;
 let currentVersion = 0;
 let currentEmail = "";
@@ -1419,7 +1770,7 @@ function loadLocalCache() {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const d = JSON.parse(raw);
-      if (d && d.settings && Array.isArray(d.ledger)) return STS.ensureAccountAnchors(d);
+      if (d && d.settings && Array.isArray(d.ledger)) return readyDb(d);
     }
   } catch (e) { /* corrupted storage: fall through to seed */ }
   return null;
@@ -1533,7 +1884,7 @@ async function boot() {
 
     if (body.data === null) {
       // First run for this household: seed the server from local cache (or the demo seed).
-      DB = localCache || STS.ensureAccountAnchors(buildSeed());
+      DB = localCache || readyDb(buildSeed());
       currentVersion = body.version;
       await syncToServer();
     } else if (isDirty && localCache) {
@@ -1545,7 +1896,7 @@ async function boot() {
       showSyncBanner("Finishing a save from last time…");
       scheduleSync();
     } else {
-      DB = STS.ensureAccountAnchors(body.data);
+      DB = readyDb(body.data);
       currentVersion = body.version;
     }
     saveLocalCache();
@@ -1554,7 +1905,7 @@ async function boot() {
   } catch (e) {
     // Offline or server unreachable: fall back to the local cache so the app
     // still opens, rather than hard-blocking on the login gate.
-    DB = localCache || STS.ensureAccountAnchors(buildSeed());
+    DB = localCache || readyDb(buildSeed());
     showSyncBanner("Couldn't reach the server — showing your last synced copy. Changes will sync once you're back online.");
     hideLoginGate();
     afterAuthed();
@@ -1581,6 +1932,7 @@ const useId = () => { const id = DB.nextId || 1; DB.nextId = id + 1; return id; 
 const sortState = {
   ledger: { key: "date", dir: 1 },
   cards: { key: null, dir: 1 },
+  envelopes: { key: "name", dir: 1 },
   accounts: { key: null, dir: 1 },
   recurring: { key: null, dir: 1 }
 };
@@ -1694,6 +2046,7 @@ function render() {
   renderCards();
   renderAccounts();
   renderRecurring();
+  renderEnvelopes();
   renderSettings();
   renderQuickAddOptions();
   renderImportTargets();
@@ -2453,12 +2806,125 @@ async function importJson(file) {
     }
     if (!confirm("Replace everything currently in the app with this backup?")) return;
     d.nextId = d.nextId || Math.max(0, ...d.ledger.map(e => +e.id || 0)) + 1;
-    DB = STS.ensureAccountAnchors(d); save();
+    DB = readyDb(d); save();
     alert("Backup loaded.");
   } catch (e) { alert("Couldn't read that file as JSON: " + e.message); }
 }
 function resetSeed() {
-  if (confirm("Throw away everything here and reload the sample seed data?")) { DB = STS.ensureAccountAnchors(buildSeed()); save(); }
+  if (confirm("Throw away everything here and reload the sample seed data?")) { DB = readyDb(buildSeed()); save(); }
+}
+
+// ---------------- envelopes tab ----------------
+const ENV_SORT_KEYS = {
+  name: r => r.name.toLowerCase(), monthly: r => r.monthly, perEvent: r => r.perEvent,
+  funded: r => r.funded, spent: r => r.spentCycle, remaining: r => r.remaining,
+  bar: r => r.monthly ? r.spentCycle / r.monthly : 0
+};
+function renderEnvelopes() {
+  if (!$("panel-envelopes") || !DB) return;
+  const V = STS.envelopeView(DB);
+  document.querySelectorAll("#envPhaseRow button").forEach(b => b.classList.toggle("on", +b.dataset.envphase === V.phase));
+  $("envFundedThrough").textContent = V.fundedThrough ? fmtDateLong(V.fundedThrough) : "not yet funded";
+  $("envCycleLine").textContent = "This cycle " + fmtDate(V.cycle.cycleStart) + " → " + fmtDate(V.cycle.cycleEnd) +
+    " (payday window). Paycheck event " + fmt$(V.paycheckTotal) + " · rent event " + fmt$(V.rentTotal) + ".";
+  const rv = V.review;
+  if (rv.count > 0) {
+    $("envReviewBanner").innerHTML = `<div class="banner warn"><span>⚠ ${rv.count} transaction${rv.count === 1 ? "" : "s"} need review (${fmt$(rv.total)}) — remaining is not final while these are unassigned.</span>
+      <button class="primary" type="button" onclick="switchTab('settings')">Review in Settings</button></div>`;
+  } else {
+    $("envReviewBanner").innerHTML = "";
+  }
+  let rows = V.funded.slice();
+  rows = applySort(rows, sortState.envelopes, ENV_SORT_KEYS);
+  renderSortArrows($("envHead"), sortState.envelopes);
+  $("envBody").innerHTML = rows.map(r => {
+    const pct = r.monthly > 0 ? Math.min(100, Math.round(r.spentCycle / r.monthly * 100)) : 0;
+    const overBar = r.spentCycle > r.monthly && r.monthly > 0;
+    const remainingCell = r.over
+      ? `<span class="pill bad">${fmt$(r.remaining)}</span>`
+      : fmt$(r.remaining);
+    return `<tr>
+      <td>${esc(r.name)}${r.kind === "sinking" || r.kind === "goal" || r.kind === "buffer" ? ` <span class="chip dim">${esc(r.kind)}</span>` : ""}</td>
+      <td class="num">${fmt$(r.monthly)}</td>
+      <td class="num">${r.perEvent ? fmt$(r.perEvent) : "—"}</td>
+      <td class="num">${fmt$(r.funded)}</td>
+      <td class="num">${fmt$(r.spentCycle)}</td>
+      <td class="num">${remainingCell}</td>
+      <td><div class="env-bar${overBar ? " over" : ""}" title="${pct}% of monthly"><i style="width:${overBar ? 100 : pct}%"></i></div></td>
+    </tr>`;
+  }).join("") || '<tr><td colspan="7" style="color:var(--muted)">No funded envelopes.</td></tr>';
+  $("envFixedBody").innerHTML = V.fixed.map(r => {
+    const st = r.derived.paid
+      ? '<span class="chip good">paid</span>'
+      : (r.derived.nextDue ? `<span class="chip warn">due ${esc(fmtDate(r.derived.nextDue))}</span>` : '<span class="chip dim">no recurring match</span>');
+    return `<tr>
+      <td>${esc(r.name)}</td>
+      <td class="num">${fmt$(r.monthly)}</td>
+      <td>${r.derived.nextDue ? fmtDate(r.derived.nextDue) : "—"}</td>
+      <td>${st}</td>
+    </tr>`;
+  }).join("");
+  $("envLogBody").innerHTML = V.log.map(e => {
+    const total = e.amounts ? Object.keys(e.amounts).reduce((s, id) => s + (+e.amounts[id] || 0), 0) : (e.amount || 0);
+    const src = e.eventType === "reallocate"
+      ? (STS.envelopeName(e.from) + " → " + STS.envelopeName(e.to))
+      : (e.sourceId != null ? "#" + e.sourceId : "manual");
+    return `<tr>
+      <td>${fmtDate(e.date)}</td>
+      <td>${esc(e.eventType)}</td>
+      <td>${e.phase || ""}</td>
+      <td class="num">${fmt$(STS.r2(total))}</td>
+      <td style="color:var(--muted);font-size:12px">${esc(src)}</td>
+    </tr>`;
+  }).join("") || '<tr><td colspan="5" style="color:var(--muted)">No funding events yet.</td></tr>';
+}
+function fundCandidates(eventType) {
+  const plan = DB.envelopePlan;
+  const rows = DB.ledger.filter(e => e.status !== "Void" && e.type === "income" && e.amount > 0);
+  const rentish = e => /rent|tenant|el paso/i.test((e.description || "") + " " + (e.category || ""));
+  const list = eventType === "rent" ? rows.filter(rentish) : rows;
+  return list.slice().sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0).map(e => ({
+    id: e.id, date: e.date, description: e.description, amount: e.amount,
+    funded: !!STS.findFundingEvent(plan, eventType, e.id, e.date)
+  }));
+}
+function openFundDialog(eventType) {
+  const label = eventType === "rent" ? "rent receipt" : "paycheck";
+  const cands = fundCandidates(eventType);
+  const asOfD = STS.asOf(DB);
+  const manualFunded = !!STS.findFundingEvent(DB.envelopePlan, eventType, null, asOfD);
+  const rows = cands.map(c => `<label>
+      <input type="radio" name="envFundSrc" value="${c.id}" ${c.funded ? "disabled" : ""}>
+      ${esc(c.description)} · ${fmtDate(c.date)} · ${fmt$(c.amount)}
+      ${c.funded ? '<span class="chip dim">already funded</span>' : ""}
+      <span class="when">${fmtDate(c.date)}</span>
+    </label>`).join("") || '<p class="hint">No matching deposit rows in the ledger.</p>';
+  openDlg(`
+    <h3>Fund ${esc(label)}</h3>
+    <p class="hint">Idempotent on (event, source or date). A matching event is a no-op. On a 409 from another device, reload — do not overwrite.</p>
+    <div class="checklist">${rows}
+      <label>
+        <input type="radio" name="envFundSrc" value="" ${manualFunded ? "disabled" : "checked"}>
+        Manual — ${fmtDate(asOfD)} (no source)
+        ${manualFunded ? '<span class="chip dim">already funded</span>' : ""}
+      </label>
+    </div>
+    <div class="dlg-actions">
+      <button class="ghost" type="button" onclick="closeDlg()">Cancel</button>
+      <button class="primary" type="button" id="envFundGo">Fund</button>
+    </div>
+  `);
+  $("envFundGo").onclick = () => {
+    const picked = document.querySelector('input[name="envFundSrc"]:checked');
+    if (!picked) { alert("Pick a source, or use the manual date."); return; }
+    const sourceId = picked.value === "" ? null : +picked.value;
+    const date = sourceId == null ? asOfD : (DB.ledger.find(e => e.id === sourceId) || {}).date || asOfD;
+    const res = STS.recordFundingEvent(DB, { eventType, date, sourceId, createdBy: currentEmail || "" });
+    closeDlg();
+    if (res.alreadyFunded) { alert("Already funded — no change."); return; }
+    if (!res.ok) { alert(res.reason || "Could not fund."); return; }
+    save();
+  };
 }
 
 // ---------------- settings tab ----------------
@@ -2493,7 +2959,7 @@ function switchTab(name) {
   document.querySelectorAll("[data-tab]").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
   document.querySelectorAll("section.panel").forEach(p => p.classList.toggle("on", p.id === "panel-" + name));
   const moreBtn = document.getElementById("moreTabBtn");
-  if (moreBtn) moreBtn.classList.toggle("on", ["recurring", "import", "backup", "settings"].includes(name));
+  if (moreBtn) moreBtn.classList.toggle("on", ["accounts", "recurring", "import", "backup", "settings"].includes(name));
 }
 
 // ---------------- boot ----------------
@@ -2521,6 +2987,15 @@ document.addEventListener("DOMContentLoaded", () => {
   bindSortHeaders("cardsHead", sortState.cards, renderCards);
   bindSortHeaders("accountsHead", sortState.accounts, renderAccounts);
   bindSortHeaders("recurringHead", sortState.recurring, renderRecurring);
+  bindSortHeaders("envHead", sortState.envelopes, renderEnvelopes);
+  $("envPhaseRow").addEventListener("click", e => {
+    const b = e.target.closest("button[data-envphase]");
+    if (!b || !DB) return;
+    STS.setEnvelopePhase(DB, +b.dataset.envphase, STS.asOf(DB));
+    save();
+  });
+  $("envFundPaycheckBtn").addEventListener("click", () => openFundDialog("paycheck"));
+  $("envFundRentBtn").addEventListener("click", () => openFundDialog("rent"));
   $("runwayNet").addEventListener("change", render);
   $("addCardBtn").addEventListener("click", () => openReconcile(-1));
   $("addAcctBtn").addEventListener("click", () => openEditAccount(-1));
