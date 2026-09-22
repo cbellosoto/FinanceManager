@@ -259,6 +259,7 @@ Optional coupling of envelope remaining to the safe-to-spend headline (e.g., the
 1. **This doc** — review first. Cheap to argue about a document; expensive to argue about a diff.
 2. **Phase 1 PR** — category ids, legacy remap with preview, rules in `doImport`/`quickAdd`, `envelopeId` stamping.
 3. **Phase 2 PR** — `envelopePlan` + `ensureEnvelopes()` backfill + pure functions + the tab + tests (§10).
+3b. **Phase 2b PR** — the §14 follow-up controls (Move money, Edit plan targets, Correct funding). Envelopes-tab only; merges after Phase 2.
 4. **Phase 3 PR** — only if the coupling is wanted.
 
 Ground rules for every PR:
@@ -275,6 +276,41 @@ Ground rules for every PR:
 2. ✅ **Mortgage = KC property.** The $1,189.29 mortgage belongs to the KC property. It stays a fixed derived envelope on the household side (§5); the rental lane is the rent funding event → tax/maintenance reserves.
 3. ✅ **Mobile tab placement confirmed (2026-09-20).** Envelopes in the bottom bar, Accounts behind More (current bar: Home | Ledger | Cards | Accounts | More).
 4. ✅ **Rent cadence confirmed** — two parties, each paying twice a month → ~4 deposits/mo of ~$425 (sometimes ~$450 with the Spectrum internet reimbursement). **$100 funded per receipt = $400/mo.** The +$25 top-up is income noise, not a funding event (§4).
+
+---
+
+## 14. Phase 2 follow-up controls (queued 2026-09-21)
+
+Phase 2 ships the Envelopes tab with funding, derived balances, and the funding log, but three controls the tab needs are still missing. They surfaced while writing the household's step-by-step envelope guide (2026-09-21): the engine already supports reallocation events (§6), but there is no UI to move money; monthly targets live in the blob but aren't editable; and a mis-tapped funding event has no undo. All three are **Envelopes-tab-only** — no changes to existing engine functions (§12 guardrails apply unchanged) — and should land as one follow-up PR after Phase 2 merges.
+
+### 14.1 Move money (bucket-to-bucket reallocation)
+
+- **What:** a "Move money" action in the Envelopes tab: pick from-envelope, to-envelope, amount, date (default today).
+- **Writes:** `{ eventType: "reallocate", date, from, to, amount, sourceId: "<generated uuid>", createdAt, createdBy }` appended to `fundingEvents`. It appears in the funding log like any other event. `remaining` follows from §3.1 — no balance mutation.
+- **Guardrails:** from/to must both be non-fixed envelopes (fixed are derived, §5); from ≠ to; amount > 0. A move may drive the source envelope negative — that renders `.pill.bad` and is the user's explicit choice. Explicit beats magic.
+- **Idempotency:** key `(eventType, sourceId)`; the dialog generates one UUID per confirmed move, so a double-submit is a no-op.
+- **Primary uses:** covering an overspent envelope from one with slack; sweeping leftover to the buffer (the §6 "sweep to buffer" is exactly this action with `to: "buffer"`).
+
+### 14.2 Edit plan targets
+
+- **What:** edit an envelope's monthly target from the Envelopes tab (per-envelope edit control or a plan-edit mode).
+- **Semantics (history-preserving, same rule as the Phase 1 → 2 toggle, §3.2):** the edit changes `phases[activePhase].envelopes[i].monthly`. Future funding events use the new targets; past funding events keep their recorded amounts; `funded`/`spent`/`remaining` history is untouched. The Monthly column updates immediately.
+- **Fixed envelopes:** not editable — their amounts derive from the recurring schedule (§5).
+- **Total visibility:** show the running plan total next to the adopted $6,499.99/mo so drift is visible. No enforcement — it's their plan.
+- **Storage:** in-place edit of `DB.envelopePlan.phases[phase].envelopes[i].monthly`; rides the existing blob + `baseVersion`/409 sync flow. No migration, no schema change.
+
+### 14.3 Correct funding (void a funding event)
+
+- **What:** undo a mis-tapped funding event (wrong paycheck date, wrong rent source).
+- **Design:** the funding log is append-only — correction is a reversing event, not a delete: `{ eventType: "reversal", date, reverses: "<funding event id>", amounts: { "<envelope-id>": -<amount>, … }, sourceId: "<generated uuid>", createdAt, createdBy }`. Original and reversal both stay visible in the log.
+- **UI:** each funding-log row gets a "Void" action with a confirm step.
+- **Event ids:** every funding event carries a stable `id` (generated UUID at write time) so `reverses` has something to reference. Events written before this change get a deterministic fallback id on read (e.g. `eventType:sourceId ?? date:index`) — no blob migration.
+- **Guardrails:** voiding is allowed even when later events exist — `remaining` recomputes from the full log (§3.1), so ordering doesn't matter. A second void of the same event is a no-op (check for an existing reversal referencing that id). The reversal's `amounts` must exactly negate the original's per-envelope amounts (recompute from the event, don't trust the log row's display).
+
+### 14.4 Implementation notes
+
+- One follow-up PR ("Phase 2b: envelope controls") covering 14.1–14.3, after PR #3 merges.
+- Tests (extend `tests/envelope-phase2.test.js` or a new `tests/envelope-controls.test.js`): move money updates both envelopes' remaining and appears in the log; double-submit is a no-op; target edit changes future funding amounts but not past events; void writes an exact-negation reversal and a second void is a no-op; fixed envelopes refuse moves and target edits.
 
 ---
 
@@ -298,3 +334,7 @@ Ground rules for every PR:
 - **E. Guardrails + `computeAll`, `countsInWindow`** (§12).
 - **Display name: "KC Mortgage"** (§2); mortgage = KC property, household side (§13.2).
 - §13.3 (mobile tab placement) confirmed 2026-09-20: Envelopes in the bottom bar, Accounts behind More. All §13 decisions resolved.
+
+## Rev 2.2 changelog (2026-09-21, queued by Christopher)
+
+- **New §14: Phase 2 follow-up controls.** Surfaced while writing the household's step-by-step envelope guide: (14.1) "Move money" UI for `reallocate` events (the engine already supports them per §6 — the button doesn't exist yet); (14.2) editable monthly plan targets with history-preserving semantics (future funding uses new targets, past events keep recorded amounts, same rule as the phase toggle); (14.3) funding-event correction via append-only reversal events (no deletes). One follow-up PR ("Phase 2b: envelope controls") after Phase 2 merges; §12 phase list updated.
