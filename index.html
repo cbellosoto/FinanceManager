@@ -634,12 +634,12 @@
     <p class="hint">Paydays roll forward automatically — once a payday passes, the window moves to the next one.
     The seed data uses a fixed “today” of 2024-07-12 so it matches the reference workbook; switch to the real
     date when you load your own numbers.</p>
-    <h2 style="margin-top:22px">Envelope categories (Phase 1)</h2>
-    <p class="hint">Stamp a stable <b>envelope id</b> on each ledger row (used later by the Envelopes tab).
-    Preview the remap first — nothing changes until you apply. Mixed merchants (Amazon, Walmart, Costco, Sam&apos;s)
-    stay unassigned for a human pick. Safe-to-spend math is unchanged.</p>
+    <h2 style="margin-top:22px">Categories are envelopes</h2>
+    <p class="hint">Each spend <b>category</b> is an envelope bucket (same names as the Envelopes tab).
+    Preview first — apply rewrites the category to the envelope name and stamps <code>envelopeId</code> once.
+    Mixed merchants (Amazon, Walmart, Costco, Sam&apos;s) stay unassigned for a human pick. Transfers, paychecks, and rent income are not envelopes. Safe-to-spend math is unchanged.</p>
     <div class="frow">
-      <button class="ghost" type="button" id="envRemapPreviewBtn">Preview category remap</button>
+      <button class="ghost" type="button" id="envRemapPreviewBtn">Preview category alignment</button>
     </div>
     <div id="envRemapPreview"></div>
   </section>
@@ -1319,8 +1319,9 @@ const STS = (() => {
     "electric": "household-utilities", "water": "household-utilities", "gas utility": "household-utilities",
     "groceries": "groceries", "grocery": "groceries",
     "restaurants": "restaurants", "dining": "restaurants", "dining out": "restaurants", "restaurant": "restaurants",
+    "food & drink": "restaurants", "food and drink": "restaurants",
     "gas": "gas", "fuel": "gas",
-    "health insurance": "health-insurance", "insurance": "health-insurance",
+    "health insurance": "health-insurance",
     "life insurance": "life-insurance",
     "car insurance sinking fund": "car-insurance-sinking", "car insurance": "car-insurance-sinking",
     "medical financing": "medical-financing",
@@ -1335,10 +1336,18 @@ const STS = (() => {
     "subscriptions & digital services": "subscriptions", "subscriptions": "subscriptions",
     "subscription": "subscriptions", "streaming": "subscriptions",
     "known annual renewals": "annual-renewals", "annual renewals": "annual-renewals",
+    "membership": "annual-renewals",
     "rental tax reserve": "rental-tax-reserve",
     "home & rental maintenance reserve": "maintenance-reserve", "maintenance reserve": "maintenance-reserve", "maintenance": "maintenance-reserve",
+    "maintance": "maintenance-reserve",
     "christopher personal & fun": "christopher-fun", "christopher fun": "christopher-fun", "discretionary": "christopher-fun",
+    "christopher": "christopher-fun",
     "sara personal & fun": "sara-fun", "sara fun": "sara-fun",
+    "sara": "sara-fun",
+    "entertainment": "christopher-fun",
+    "tip": "restaurants",
+    "dentist": "oop-medical", "medicine": "oop-medical", "medical payment": "oop-medical",
+    "pay-as-you-go": "subscriptions",
     "extra debt payoff": "extra-debt-payoff", "debt payoff": "extra-debt-payoff", "financing": "extra-debt-payoff",
     "emergency savings": "emergency-savings", "emergency fund": "emergency-savings",
     "investing": "investing", "investment": "investing",
@@ -1358,14 +1367,16 @@ const STS = (() => {
     { re: /\b(grocery|grocer|aldi|trader joe|whole foods|kroger|hy-?vee|safeway|food lion)\b/i, id: "groceries" },
     { re: /\b(restaurant|cafe|coffee|starbucks|mcdonald|chipotle|dining|doordash|ubereats|grubhub)\b/i, id: "restaurants" },
     { re: /\b(shell|bp\b|exxon|chevron|gas station|fuel|casey'?s|qt\b|quiktrip)\b/i, id: "gas" },
-    { re: /\b(health insurance|blue cross|aetna|cigna|unitedhealthcare|uhc)\b/i, id: "health-insurance" },
-    { re: /\b(life insurance|northwestern mutual|new york life)\b/i, id: "life-insurance" },
+    { re: /\b(health insurance|blue cross|aetna|cigna|unitedhealthcare|uhc|united health)\b/i, id: "health-insurance" },
+    { re: /\b(life insurance|northwestern mutual|new york life|primerica)\b/i, id: "life-insurance" },
+    { re: /\b(sierra\s*providen)\b/i, id: "providence-plan" },
     { re: /\b(geico|progressive|state farm|allstate|car insurance|auto insurance)\b/i, id: "car-insurance-sinking" },
     { re: /\b(pharmacy|cvs|walgreens|rite aid|doctor|dental|medical|hospital|urgent care)\b/i, id: "oop-medical" },
     { re: /\b(elisa)\b/i, id: "elisa-spend" },
     { re: /\b(pest|orkin|terminix)\b/i, id: "pest-control" },
     { re: /\b(cat|petco|petsmart|vet\b|veterinary)\b/i, id: "cats" },
     { re: /\b(netflix|hulu|spotify|disney\+|apple\.com\/bill|google\s*storage|subscription|gym)\b/i, id: "subscriptions" },
+    { re: /\b(aaa|annual membership)\b/i, id: "annual-renewals" },
     { re: /\b(vanguard|fidelity|schwab|robinhood|invest)\b/i, id: "investing" },
     { re: /\b(savings transfer|emergency fund)\b/i, id: "emergency-savings" }
   ];
@@ -1385,30 +1396,70 @@ const STS = (() => {
   }
   // Resolve category text + description → { envelopeId, category, needsReview, why }.
   // Transfers / income / card payments get null envelopeId (not envelope spending).
+  const NON_SPEND_CATS = {
+    "transfer": 1, "income": 1, "refund": 1, "rf1": 1, "interest": 1,
+    "transfer from savings": 1, "business": 1, "rental": 1
+  };
+  function isCanonicalCategory(cat) {
+    const k = normCatKey(cat);
+    if (!k) return null;
+    if (ENVELOPE_BY_ID[cat]) return cat;
+    const mapped = LEGACY_CATEGORY_MAP[k];
+    if (mapped && normCatKey(envelopeName(mapped)) === k) return mapped;
+    return null;
+  }
   function resolveEnvelopeAssignment({ description, category, type } = {}) {
     const desc = String(description || "");
     const cat = String(category || "").trim();
     const t = String(type || "");
+    const catKey = normCatKey(cat);
 
-    if (t === "card_payment" || t === "income" || normCatKey(cat) === "transfer" || normCatKey(cat) === "income" || normCatKey(cat) === "refund") {
+    if (t === "card_payment" || t === "income" || NON_SPEND_CATS[catKey]) {
       return { envelopeId: null, category: cat || (t === "card_payment" ? "Transfer" : cat), needsReview: false, why: "non-spend type" };
     }
+    const canonical = isCanonicalCategory(cat);
+    if (canonical) return { envelopeId: canonical, category: envelopeName(canonical), needsReview: false, why: "category is envelope" };
     if (isManualReviewMerchant(desc)) {
-      return { envelopeId: null, category: cat, needsReview: true, why: "mixed merchant — needs human pick" };
-    }
-    if (cat) {
-      const mapped = LEGACY_CATEGORY_MAP[normCatKey(cat)];
-      if (mapped) return { envelopeId: mapped, category: envelopeName(mapped) || cat, needsReview: false, why: "category map" };
-      // already a stable id?
-      if (ENVELOPE_BY_ID[cat]) return { envelopeId: cat, category: envelopeName(cat), needsReview: false, why: "envelope id" };
+      const mapped = LEGACY_CATEGORY_MAP[catKey];
+      return { envelopeId: null, category: mapped ? envelopeName(mapped) : cat, needsReview: true, why: "mixed merchant — needs human pick" };
     }
     for (const rule of ORDERED_TRANSACTION_RULES) {
       if (rule.re.test(desc)) {
-        return { envelopeId: rule.id, category: cat || envelopeName(rule.id), needsReview: false, why: "description rule" };
+        return { envelopeId: rule.id, category: envelopeName(rule.id), needsReview: false, why: "description rule" };
       }
+    }
+    if (cat) {
+      const mapped = LEGACY_CATEGORY_MAP[catKey];
+      if (mapped) return { envelopeId: mapped, category: envelopeName(mapped) || cat, needsReview: false, why: "category map" };
     }
     if (cat) return { envelopeId: null, category: cat, needsReview: true, why: "uncategorized label" };
     return { envelopeId: null, category: "", needsReview: true, why: "no match" };
+  }
+  function alignLedgerCategories(db) {
+    let n = 0;
+    const rows = (db && db.ledger) || [];
+    for (const e of rows) {
+      const has = Object.prototype.hasOwnProperty.call(e, "envelopeId") && e.envelopeId != null && e.envelopeId !== "";
+      if (has) {
+        const name = envelopeName(e.envelopeId);
+        if (name && e.category !== name) { e.category = name; n++; }
+        continue;
+      }
+      const r = resolveEnvelopeAssignment({ description: e.description, category: e.category, type: e.type });
+      if (r.envelopeId) {
+        e.envelopeId = r.envelopeId;
+        e.category = r.category || envelopeName(r.envelopeId);
+        n++;
+      } else if (r.why === "non-spend type") {
+        e.envelopeId = null;
+        if (r.category && e.category !== r.category) { e.category = r.category; n++; }
+        else n++;
+      } else {
+        e.envelopeId = r.envelopeId == null ? null : r.envelopeId;
+        if (r.category && e.category !== r.category) { e.category = r.category; n++; }
+      }
+    }
+    return n;
   }
   function previewEnvelopeRemap(ledger) {
     const rows = Array.isArray(ledger) ? ledger : [];
@@ -1457,6 +1508,62 @@ const STS = (() => {
     return PAY_FREQ_DIVISOR[freq] || 26;
   }
   const ADOPTED_PLAN_MONTHLY = 6499.99;
+  const FULL_NET_PER_PAYCHECK = 2215.38;
+  const YEAR_WORK_HOURS = 2080;
+  const UNPAID_HOLIDAY_HOURS = 8;
+  function nthWeekday(year, month, weekday, n) {
+    const d = new Date(year, month - 1, 1);
+    const add = (weekday - d.getDay() + 7) % 7;
+    d.setDate(1 + add + (n - 1) * 7);
+    return d;
+  }
+  function lastWeekday(year, month, weekday) {
+    const d = new Date(year, month, 0);
+    const sub = (d.getDay() - weekday + 7) % 7;
+    d.setDate(d.getDate() - sub);
+    return d;
+  }
+  function observedHoliday(d) {
+    const day = d.getDay();
+    if (day === 6) return new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1);
+    if (day === 0) return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+    return d;
+  }
+  function weekdayFederalHolidays(year) {
+    const y = year || 2026;
+    const raw = [
+      observedHoliday(new Date(y, 0, 1)),
+      nthWeekday(y, 1, 1, 3),
+      nthWeekday(y, 2, 1, 3),
+      lastWeekday(y, 5, 1),
+      observedHoliday(new Date(y, 5, 19)),
+      observedHoliday(new Date(y, 6, 4)),
+      nthWeekday(y, 9, 1, 1),
+      nthWeekday(y, 10, 1, 2),
+      observedHoliday(new Date(y, 10, 11)),
+      nthWeekday(y, 11, 4, 4),
+      observedHoliday(new Date(y, 11, 25))
+    ];
+    const seen = {};
+    const out = [];
+    for (const d of raw) {
+      if (d.getDay() === 0 || d.getDay() === 6) continue;
+      const key = toStr(d);
+      if (seen[key]) continue;
+      seen[key] = 1;
+      out.push(key);
+    }
+    return out;
+  }
+  function holidayAdjustedNetPerPaycheck(fullNet, year) {
+    const full = fullNet == null ? FULL_NET_PER_PAYCHECK : +fullNet;
+    const nHol = weekdayFederalHolidays(year).length;
+    const paidHours = YEAR_WORK_HOURS - nHol * UNPAID_HOLIDAY_HOURS;
+    return r2(full * paidHours / YEAR_WORK_HOURS);
+  }
+  function holidayAdjustedPaycheckMonthly(fullNet, year) {
+    return r2(holidayAdjustedNetPerPaycheck(fullNet, year) * 26 / 12);
+  }
   function envelopeMonthly(id, phase, plan) {
     const d = ENVELOPE_BY_ID[id];
     if (!d) return 0;
@@ -1839,8 +1946,9 @@ const STS = (() => {
     parseCSV, parseDateLoose, parseAmountLoose, normalizeCsv, classifyImport,
     overduePendingOut, stalePending, computeAll,
     ENVELOPE_DEFS, ENVELOPE_BY_ID, ENVELOPE_NAME_BY_ID, LEGACY_CATEGORY_MAP,
-    resolveEnvelopeAssignment, previewEnvelopeRemap, applyEnvelopeRemap,
-    envelopeName, envelopeKind, isManualReviewMerchant,
+    resolveEnvelopeAssignment, previewEnvelopeRemap, applyEnvelopeRemap, alignLedgerCategories,
+    envelopeName, envelopeKind, isManualReviewMerchant, isCanonicalCategory,
+    FULL_NET_PER_PAYCHECK, weekdayFederalHolidays, holidayAdjustedNetPerPaycheck, holidayAdjustedPaycheckMonthly,
     payFrequencyDivisor, monthlyByIdForEvent, allocateFundingEvent,
     ensureEnvelopes, setEnvelopePhase, envelopeCycleBounds,
     fundingEventKey, findFundingEvent, recordFundingEvent, recordReallocate,
@@ -2182,9 +2290,8 @@ function renderQuickAddOptions() {
     + spendableAccounts().map(a => `<option value="acct:${esc(a.name)}">🏦 ${esc(a.name)}</option>`).join("");
   if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
   if (!$("qaDate").value) $("qaDate").value = STS.asOf(DB);
-  const cats = new Set(STS.ENVELOPE_DEFS.map(e => e.name));
-  DB.ledger.forEach(e => { if (e.category) cats.add(e.category); });
-  $("catList").innerHTML = [...cats].sort((a, b) => a.localeCompare(b)).map(c => `<option value="${esc(c)}">`).join("");
+  const cats = STS.ENVELOPE_DEFS.map(e => e.name);
+  $("catList").innerHTML = cats.map(c => `<option value="${esc(c)}">`).join("");
 }
 function quickAdd() {
   const desc = $("qaDesc").value.trim();
@@ -2315,15 +2422,26 @@ function openEditEvent(id) {
       <div class="f"><span>Status</span><select id="evStatus"><option ${e.status === "Pending" ? "selected" : ""}>Pending</option><option ${e.status === "Cleared" ? "selected" : ""}>Cleared</option></select></div>
     </div>
     <div class="frow">
-      <div class="f"><span>Category</span><input id="evCat" list="catList" value="${esc(e.category)}" size="14"></div>
-      <div class="f"><span>Envelope</span>
+      <div class="f"><span>Category (envelope)</span><input id="evCat" list="catList" value="${esc(e.category)}" size="18"></div>
+      <div class="f"><span>Envelope id</span>
         <select id="evEnv"><option value="">— unassigned / review —</option>${STS.ENVELOPE_DEFS.map(x => `<option value="${esc(x.id)}" ${e.envelopeId === x.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>
       </div>
       <div class="f"><span>Notes</span><input id="evNotes" value="${esc(e.notes || "")}" size="26"></div>
     </div>
-    <p class="hint" style="margin-top:6px">Envelope id is stamped on the row. Changing it here is an explicit edit (Phase 1 allows fixing review-queue rows).</p>
+    <p class="hint" style="margin-top:6px">Category is the envelope bucket. Picking either field keeps the other in sync. Explicit edits are for review-queue rows.</p>
     <div class="dlg-actions"><button class="ghost" onclick="closeDlg()">Cancel</button><button class="primary" id="evSave">Save</button></div>
   `);
+  const evCat = $("evCat"), evEnv = $("evEnv");
+  evCat.addEventListener("change", () => {
+    const assign = STS.resolveEnvelopeAssignment({ description: e.description, category: evCat.value.trim(), type: e.type });
+    if (assign.envelopeId) {
+      evEnv.value = assign.envelopeId;
+      if (assign.category) evCat.value = assign.category;
+    }
+  });
+  evEnv.addEventListener("change", () => {
+    if (evEnv.value) evCat.value = STS.envelopeName(evEnv.value) || evCat.value;
+  });
   $("evSave").onclick = () => {
     const amt = parseFloat($("evAmt").value);
     const date = $("evDate").value;
@@ -2332,10 +2450,17 @@ function openEditEvent(id) {
     e.date = date; e.description = $("evDesc").value.trim() || e.description;
     e.amount = STS.r2(amt); e.type = $("evType").value;
     e.source = $("evSrc").value; e.cardName = $("evCard").value;
-    e.status = $("evStatus").value; e.category = $("evCat").value.trim(); e.notes = $("evNotes").value.trim();
+    e.status = $("evStatus").value; e.notes = $("evNotes").value.trim();
     const envSel = $("evEnv").value;
-    e.envelopeId = envSel ? envSel : null;
-    if (envSel && !e.category) e.category = STS.envelopeName(envSel);
+    const catIn = $("evCat").value.trim();
+    if (envSel) {
+      e.envelopeId = envSel;
+      e.category = STS.envelopeName(envSel) || catIn;
+    } else {
+      const assign = STS.resolveEnvelopeAssignment({ description: e.description, category: catIn, type: e.type });
+      e.envelopeId = assign.envelopeId;
+      e.category = assign.category || catIn;
+    }
     // cash impact follows where the money moves: anything on a card except its statement payment stays on
     // the card. A card_payment with no source account isn't a cash transfer at all -- it's a debt paid down
     // by charging another card (see Recurring's "Pays down debt"), so it stays off the checking projection too.
@@ -2758,8 +2883,8 @@ function previewEnvelopeRemapUi() {
       `<option value="${esc(x.id)}" ${x.id === cur ? "selected" : ""}>${esc(x.name)}</option>`).join("");
   };
   $("envRemapPreview").innerHTML = `
-    <p class="hint">Preview: ${counts.map || 0} to stamp, ${counts.review || 0} need review, ${counts.keep || 0} already stamped, ${counts.skip || 0} non-spend.
-    Uncheck a row to leave it untouched. Apply writes <code>envelopeId</code> only on checked rows that are not already stamped.</p>
+    <p class="hint">Preview: ${counts.map || 0} to align, ${counts.review || 0} need review, ${counts.keep || 0} already stamped, ${counts.skip || 0} non-spend.
+    Uncheck a row to leave it untouched. Apply sets the category to the envelope name and stamps <code>envelopeId</code> once.</p>
     <div class="scroll-x"><table>
       <thead><tr><th></th><th>Date</th><th>Description</th><th class="num">Amount</th><th>From</th><th>Envelope</th><th>Note</th></tr></thead>
       <tbody>${sugg.map((s, i) => `<tr class="${s.action === "keep" ? "quiet" : ""}">
@@ -2774,7 +2899,7 @@ function previewEnvelopeRemapUi() {
       </tr>`).join("")}</tbody>
     </table></div>
     <div class="frow" style="margin-top:10px">
-      <button class="primary" type="button" id="envRemapApplyBtn">Apply selected stamps</button>
+      <button class="primary" type="button" id="envRemapApplyBtn">Apply selected alignment</button>
     </div>`;
   $("envRemapApplyBtn").onclick = applyEnvelopeRemapUi;
 }
@@ -2791,9 +2916,9 @@ function applyEnvelopeRemapUi() {
     decisions.push({ id: s.id, envelopeId, category, apply: true });
   });
   if (!decisions.length) { alert("Nothing selected to apply."); return; }
-  if (!confirm(`Stamp envelope id on ${decisions.length} ledger row(s)? This does not change safe-to-spend.`)) return;
+  if (!confirm(`Align category to envelope on ${decisions.length} ledger row(s)? This does not change safe-to-spend.`)) return;
   const n = STS.applyEnvelopeRemap(DB, decisions);
-  $("envRemapPreview").innerHTML = `<p class="hint">Applied: ${n} row(s) stamped. Re-run preview anytime for remaining review items.</p>`;
+  $("envRemapPreview").innerHTML = `<p class="hint">Applied: ${n} row(s) aligned. Re-run preview anytime for remaining review items.</p>`;
   envRemapRows = null;
   save();
 }
@@ -2933,8 +3058,12 @@ function renderEnvelopes() {
     " (payday window). Paycheck event " + fmt$(V.paycheckTotal) + " · rent event " + fmt$(V.rentTotal) + ".";
   if ($("envPlanTotalLine")) {
     const drift = STS.r2(V.planTotal - V.adoptedMonthly);
+    const year = (STS.toDate(V.asOfD) || new Date()).getFullYear();
+    const holMo = STS.holidayAdjustedPaycheckMonthly(STS.FULL_NET_PER_PAYCHECK, year);
+    const fullMo = STS.r2(STS.FULL_NET_PER_PAYCHECK * 26 / 12);
     $("envPlanTotalLine").textContent = "Plan total " + fmt$(V.planTotal) + " / adopted " + fmt$(V.adoptedMonthly) + "/mo" +
-      (drift ? " · drift " + fmt$(drift) : "");
+      (drift ? " · drift " + fmt$(drift) : "") +
+      ". Holiday-adjusted paycheck ~" + fmt$(holMo) + "/mo (full 26 checks would be " + fmt$(fullMo) + "; unpaid federal holidays).";
   }
   const rv = V.review;
   if (rv.count > 0) {
