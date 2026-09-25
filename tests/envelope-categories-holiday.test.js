@@ -99,6 +99,28 @@ for (const [desc, cat, type] of [
 }
 
 {
+  const row = { description: "Aldi", category: "Groceries", type: "card_purchase" };
+  const explicitBlank = STS.resolveEditEnvelopeChoice({ ...row, selectedEnvelopeId: "", envelopeTouched: true });
+  eq("explicit unassigned stays unassigned", explicitBlank.envelopeId, null);
+  eq("explicit unassigned keeps category for review", explicitBlank.category, "Groceries");
+  const untouched = STS.resolveEditEnvelopeChoice({ ...row, selectedEnvelopeId: "", envelopeTouched: false });
+  eq("untouched blank auto-resolves", untouched.envelopeId, "groceries");
+  const selected = STS.resolveEditEnvelopeChoice({ ...row, selectedEnvelopeId: "restaurants", envelopeTouched: true });
+  eq("explicit envelope selection wins", selected.envelopeId, "restaurants");
+  eq("explicit selection syncs category", selected.category, "Restaurants");
+  const laterEdit = STS.resolveEditEnvelopeChoice({ ...row, selectedEnvelopeId: "", envelopeTouched: false,
+    previousEnvelopeId: null, previousCategory: "Groceries", previousDescription: "Aldi", previousType: "card_purchase" });
+  eq("unassigned remains in review after a later unrelated edit", laterEdit.envelopeId, null);
+
+  const db = {
+    settings: { payFrequency: "Biweekly", lastPayday: "2026-09-18", nextPayday: "2026-10-02", asOfMode: "fixed", asOfDate: "2026-09-24" },
+    envelopePlan: { phase: 1, envelopeEpoch: "2026-09-18", phaseActivatedAt: {}, fundingEvents: [] },
+    ledger: [{ ...row, ...explicitBlank, date: "2026-09-24", amount: -20, status: "Cleared" }]
+  };
+  eq("explicit unassigned row appears in review queue", STS.envelopeReviewQueue(db).count, 1);
+}
+
+{
   const db = {
     ledger: [
       { id: 1, type: "card_purchase", description: "Aldi", category: "Grocery", amount: -20 },

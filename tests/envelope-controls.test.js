@@ -149,6 +149,7 @@ function miniDb(overrides) {
   const void1 = STS.recordReversal(db, { reverses: origId, date: "2026-10-03", sourceId: "rev-1" });
   ok("void ok", void1.ok);
   eq("reversal eventType", void1.event.eventType, "reversal");
+  eq("reversal uses original accounting date", void1.event.date, fund.event.date);
   eq("reverses original id", void1.event.reverses, origId);
   const orig = fund.event.amounts;
   const neg = void1.event.amounts;
@@ -179,6 +180,22 @@ function miniDb(overrides) {
   const voidLegacy = STS.recordReversal(db2, { reverses: fallbackId, date: "2026-10-03" });
   ok("void by fallback id ok", voidLegacy.ok);
   eq("legacy groceries funded after void", STS.envelopeFunded(db2, "groceries"), 0);
+}
+
+// A correction made before a future-dated funding event must still cancel it.
+{
+  const db = miniDb();
+  db.settings.asOfDate = "2026-09-24";
+  const before = STS.envelopeFunded(db, "groceries");
+  const fund = STS.recordFundingEvent(db, { eventType: "paycheck", date: "2026-10-02", sourceId: "future-pay" });
+  ok("future funding recorded", fund.ok);
+  ok("future funding changes balance", STS.envelopeFunded(db, "groceries") > before);
+  const correctionTime = "2026-09-24T15:30:00Z";
+  const voided = STS.recordReversal(db, { reverses: fund.event.id, date: "2026-09-24", createdAt: correctionTime });
+  ok("future funding voided", voided.ok);
+  eq("reversal accounting date matches original", voided.event.date, fund.event.date);
+  eq("correction time remains in audit field", voided.event.createdAt, correctionTime);
+  eq("future funding fully canceled", STS.envelopeFunded(db, "groceries"), before);
 }
 
 console.log(failed ? `FAILED ${failed}  passed ${passed}` : `ok ${passed} passed`);
