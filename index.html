@@ -1435,6 +1435,21 @@ const STS = (() => {
     if (cat) return { envelopeId: null, category: cat, needsReview: true, why: "uncategorized label" };
     return { envelopeId: null, category: "", needsReview: true, why: "no match" };
   }
+  function resolveEditEnvelopeChoice({ description, category, type, selectedEnvelopeId, envelopeTouched,
+    previousEnvelopeId, previousCategory, previousDescription, previousType } = {}) {
+    const cat = String(category || "").trim();
+    if (envelopeTouched || selectedEnvelopeId) {
+      const id = selectedEnvelopeId || null;
+      return { envelopeId: id, category: id ? (envelopeName(id) || cat) : cat };
+    }
+    // An already-unassigned row stays in review when only unrelated fields are edited.
+    if (previousEnvelopeId === null && cat === String(previousCategory || "").trim() &&
+        description === previousDescription && type === previousType) {
+      return { envelopeId: null, category: cat };
+    }
+    const assignment = resolveEnvelopeAssignment({ description, category: cat, type });
+    return { envelopeId: assignment.envelopeId, category: assignment.category || cat };
+  }
   function alignLedgerCategories(db) {
     let n = 0;
     const rows = (db && db.ledger) || [];
@@ -1766,7 +1781,7 @@ const STS = (() => {
     return { ok: true, event };
   }
 
-  function recordReversal(db, { reverses, date, sourceId, createdBy, createdAt } = {}) {
+  function recordReversal(db, { reverses, sourceId, createdBy, createdAt } = {}) {
     ensureEnvelopes(db);
     const plan = db.envelopePlan;
     if (!reverses) return { ok: false, reason: "reverses required" };
@@ -1778,7 +1793,7 @@ const STS = (() => {
     const amounts = {};
     const src = original.amounts || {};
     for (const id of Object.keys(src)) amounts[id] = r2(-(+src[id] || 0));
-    const when = date || original.date;
+    const when = original.date;
     if (!when) return { ok: false, reason: "date required" };
     const sid = sourceId == null || sourceId === "" ? newEnvelopeEventId() : String(sourceId);
     const dup = findFundingEvent(plan, "reversal", sid, when);
@@ -1787,7 +1802,7 @@ const STS = (() => {
       id: newEnvelopeEventId(),
       eventType: "reversal", date: when, phase: plan.phase === 2 ? 2 : 1,
       reverses, sourceId: sid, amounts,
-      createdAt: createdAt || (when + "T12:00:00"),
+      createdAt: createdAt || new Date().toISOString(),
       createdBy: createdBy || ""
     };
     plan.fundingEvents.push(event);
@@ -1946,7 +1961,7 @@ const STS = (() => {
     parseCSV, parseDateLoose, parseAmountLoose, normalizeCsv, classifyImport,
     overduePendingOut, stalePending, computeAll,
     ENVELOPE_DEFS, ENVELOPE_BY_ID, ENVELOPE_NAME_BY_ID, LEGACY_CATEGORY_MAP,
-    resolveEnvelopeAssignment, previewEnvelopeRemap, applyEnvelopeRemap, alignLedgerCategories,
+    resolveEnvelopeAssignment, resolveEditEnvelopeChoice, previewEnvelopeRemap, applyEnvelopeRemap, alignLedgerCategories,
     envelopeName, envelopeKind, isManualReviewMerchant, isCanonicalCategory,
     FULL_NET_PER_PAYCHECK, weekdayFederalHolidays, holidayAdjustedNetPerPaycheck, holidayAdjustedPaycheckMonthly,
     payFrequencyDivisor, monthlyByIdForEvent, allocateFundingEvent,
@@ -2432,6 +2447,7 @@ function openEditEvent(id) {
     <div class="dlg-actions"><button class="ghost" onclick="closeDlg()">Cancel</button><button class="primary" id="evSave">Save</button></div>
   `);
   const evCat = $("evCat"), evEnv = $("evEnv");
+  let envelopeTouched = false;
   evCat.addEventListener("change", () => {
     const assign = STS.resolveEnvelopeAssignment({ description: e.description, category: evCat.value.trim(), type: e.type });
     if (assign.envelopeId) {
@@ -2440,6 +2456,7 @@ function openEditEvent(id) {
     }
   });
   evEnv.addEventListener("change", () => {
+    envelopeTouched = true;
     if (evEnv.value) evCat.value = STS.envelopeName(evEnv.value) || evCat.value;
   });
   $("evSave").onclick = () => {
@@ -2447,20 +2464,21 @@ function openEditEvent(id) {
     const date = $("evDate").value;
     if (isNaN(amt)) { alert("Amount must be a number."); return; }
     if (!date) { alert("Pick a date."); return; }
+    const previousEnvelopeId = e.envelopeId;
+    const previousCategory = e.category;
+    const previousDescription = e.description;
+    const previousType = e.type;
     e.date = date; e.description = $("evDesc").value.trim() || e.description;
     e.amount = STS.r2(amt); e.type = $("evType").value;
     e.source = $("evSrc").value; e.cardName = $("evCard").value;
     e.status = $("evStatus").value; e.notes = $("evNotes").value.trim();
-    const envSel = $("evEnv").value;
-    const catIn = $("evCat").value.trim();
-    if (envSel) {
-      e.envelopeId = envSel;
-      e.category = STS.envelopeName(envSel) || catIn;
-    } else {
-      const assign = STS.resolveEnvelopeAssignment({ description: e.description, category: catIn, type: e.type });
-      e.envelopeId = assign.envelopeId;
-      e.category = assign.category || catIn;
-    }
+    const envelopeChoice = STS.resolveEditEnvelopeChoice({
+      description: e.description, category: $("evCat").value, type: e.type,
+      selectedEnvelopeId: evEnv.value, envelopeTouched,
+      previousEnvelopeId, previousCategory, previousDescription, previousType
+    });
+    e.envelopeId = envelopeChoice.envelopeId;
+    e.category = envelopeChoice.category;
     // cash impact follows where the money moves: anything on a card except its statement payment stays on
     // the card. A card_payment with no source account isn't a cash transfer at all -- it's a debt paid down
     // by charging another card (see Recurring's "Pays down debt"), so it stays off the checking projection too.
@@ -3255,7 +3273,7 @@ function openEditPlanDialog() {
 function voidFundingEvent(eventId) {
   if (!eventId) return;
   if (!confirm("Void this funding event? A reversing entry is added; the original stays in the log.")) return;
-  const res = STS.recordReversal(DB, { reverses: eventId, date: STS.asOf(DB), createdBy: currentEmail || "" });
+  const res = STS.recordReversal(DB, { reverses: eventId, createdBy: currentEmail || "" });
   if (res.alreadyFunded) { alert("Already voided — no change."); return; }
   if (!res.ok) { alert(res.reason || "Could not void."); return; }
   save();
