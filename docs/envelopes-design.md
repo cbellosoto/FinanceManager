@@ -275,6 +275,7 @@ Ground rules for every PR:
 1. ✅ **30 canonical names confirmed** — Christopher's Phase 1 table matches the doc exactly ($6,499.99, 30 rows). One display-label change: `mortgage` → **"KC Mortgage"** (§2). Ids are stable regardless.
 2. ✅ **Mortgage = KC property.** The $1,189.29 mortgage belongs to the KC property. It stays a fixed derived envelope on the household side (§5); the rental lane is the rent funding event → tax/maintenance reserves.
 3. ✅ **Mobile tab placement confirmed (2026-09-20).** Envelopes in the bottom bar, Accounts behind More (current bar: Home | Ledger | Cards | Accounts | More).
+5. ✅ **Holiday docking + actual net confirmed (2026-09-24).** Paychecks are docked 8h per federal holiday — PR #5's holiday-adjusted paycheck line ($2,215.38 → ~$2,121.65 net, ~$4,597/mo) is correct as built. Actual net runs ~$1,900–$2,200/check; `settings.netPerPaycheck = $1,800` is Christopher's deliberate conservative floor, not a measured value. Funding math holds at the floor ($1,800 ≥ $1,549.19 paycheck event). **Monthlies not retargeted** — at ~$1,900/check the $6,499.99/mo plan runs ~$300–680/mo hot; that's a household trim decision via the Edit-targets UI (PR #4), not a code change. Revisit after a cycle of lived data.
 4. ✅ **Rent cadence confirmed** — two parties, each paying twice a month → ~4 deposits/mo of ~$425 (sometimes ~$450 with the Spectrum internet reimbursement). **$100 funded per receipt = $400/mo.** The +$25 top-up is income noise, not a funding event (§4).
 
 ---
