@@ -634,10 +634,14 @@
     <p class="hint">Paydays roll forward automatically — once a payday passes, the window moves to the next one.
     The seed data uses a fixed “today” of 2024-07-12 so it matches the reference workbook; switch to the real
     date when you load your own numbers.</p>
+    <h2 style="margin-top:22px">Category mappings</h2>
+    <p class="hint">Choose which envelope a category label feeds. Mappings apply to new entries and can suggest assignments for rows still in review. Rows already filed keep their envelope.</p>
+    <div class="frow"><button class="ghost" type="button" id="addCategoryMappingBtn">Add mapping</button></div>
+    <div id="categoryMappingsList"></div>
     <h2 style="margin-top:22px">Categories are envelopes</h2>
     <p class="hint">Each spend <b>category</b> is an envelope bucket (same names as the Envelopes tab).
     Preview first — apply rewrites the category to the envelope name and stamps <code>envelopeId</code> once.
-    Mixed merchants (Amazon, Walmart, Costco, Sam&apos;s) stay unassigned for a human pick. Transfers, paychecks, and rent income are not envelopes. Safe-to-spend math is unchanged.</p>
+    Mixed merchants (Amazon, Walmart, Costco, Sam&apos;s) stay unassigned unless their category has a mapping. Transfers, paychecks, and rent income are not envelopes. Safe-to-spend math is unchanged.</p>
     <div class="frow">
       <button class="ghost" type="button" id="envRemapPreviewBtn">Preview category alignment</button>
     </div>
@@ -1408,7 +1412,45 @@ const STS = (() => {
     if (mapped && normCatKey(envelopeName(mapped)) === k) return mapped;
     return null;
   }
-  function resolveEnvelopeAssignment({ description, category, type } = {}) {
+  function validateUserCategoryMapping(label, envelopeId) {
+    const key = normCatKey(label);
+    if (!key) return { ok: false, reason: "Enter a category label." };
+    if (["__proto__", "prototype", "constructor"].includes(key)) return { ok: false, reason: "That label is reserved." };
+    if (NON_SPEND_CATS[key]) return { ok: false, reason: "That label is reserved for non-spending transactions." };
+    if (isCanonicalCategory(key)) return { ok: false, reason: "That name is already an envelope. Pick a different label." };
+    const target = ENVELOPE_BY_ID[envelopeId];
+    if (!target) return { ok: false, reason: "Pick an envelope." };
+    if (target.kind === "fixed") return { ok: false, reason: "Fixed envelopes are derived from recurring bills and cannot be mapping targets." };
+    return { ok: true, key, envelopeId, paused: target.kind === "paused",
+      overridesBuiltIn: Object.prototype.hasOwnProperty.call(LEGACY_CATEGORY_MAP, key) };
+  }
+  function setUserCategoryMapping(db, label, envelopeId, previousLabel) {
+    const result = validateUserCategoryMapping(label, envelopeId);
+    if (!result.ok) return result;
+    ensureEnvelopes(db);
+    const map = db.envelopePlan.userCategoryMap;
+    const previousKey = normCatKey(previousLabel);
+    const replaced = Object.prototype.hasOwnProperty.call(map, result.key);
+    if (previousKey && previousKey !== result.key) delete map[previousKey];
+    map[result.key] = envelopeId;
+    return { ...result, replaced };
+  }
+  function deleteUserCategoryMapping(db, label) {
+    ensureEnvelopes(db);
+    const key = normCatKey(label);
+    if (!Object.prototype.hasOwnProperty.call(db.envelopePlan.userCategoryMap, key)) return false;
+    delete db.envelopePlan.userCategoryMap[key];
+    return true;
+  }
+  function userCategoryMappings(db) {
+    ensureEnvelopes(db);
+    return Object.entries(db.envelopePlan.userCategoryMap).map(([label, envelopeId]) => ({
+      label, envelopeId, name: envelopeName(envelopeId),
+      overridesBuiltIn: Object.prototype.hasOwnProperty.call(LEGACY_CATEGORY_MAP, label),
+      paused: envelopeKind(envelopeId) === "paused"
+    })).sort((a, b) => a.label.localeCompare(b.label));
+  }
+  function resolveEnvelopeAssignment({ description, category, type, userCategoryMap } = {}) {
     const desc = String(description || "");
     const cat = String(category || "").trim();
     const t = String(type || "");
@@ -1419,6 +1461,12 @@ const STS = (() => {
     }
     const canonical = isCanonicalCategory(cat);
     if (canonical) return { envelopeId: canonical, category: envelopeName(canonical), needsReview: false, why: "category is envelope" };
+    if ((!t || SPENT_TYPES[t]) && userCategoryMap && Object.prototype.hasOwnProperty.call(userCategoryMap, catKey)) {
+      const userId = userCategoryMap[catKey];
+      if (ENVELOPE_BY_ID[userId] && envelopeKind(userId) !== "fixed") {
+        return { envelopeId: userId, category: envelopeName(userId), needsReview: false, why: "user category map" };
+      }
+    }
     if (isManualReviewMerchant(desc)) {
       const mapped = LEGACY_CATEGORY_MAP[catKey];
       return { envelopeId: null, category: mapped ? envelopeName(mapped) : cat, needsReview: true, why: "mixed merchant — needs human pick" };
@@ -1437,12 +1485,12 @@ const STS = (() => {
   }
   // Category text typed by the user → envelope. Description rules are skipped so a typed
   // non-envelope label (e.g. "Travel" on a Chipotle row) isn't overridden by the merchant.
-  function resolveTypedCategory(category, type) {
+  function resolveTypedCategory(category, type, userCategoryMap) {
     const cat = String(category || "").trim();
-    const r = resolveEnvelopeAssignment({ description: "", category: cat, type });
+    const r = resolveEnvelopeAssignment({ description: "", category: cat, type, userCategoryMap });
     return { envelopeId: r.envelopeId, category: r.envelopeId ? (r.category || cat) : cat };
   }
-  function resolveEditEnvelopeChoice({ description, category, type, selectedEnvelopeId, envelopeTouched,
+  function resolveEditEnvelopeChoice({ description, category, type, selectedEnvelopeId, envelopeTouched, userCategoryMap,
     previousEnvelopeId, previousCategory, previousDescription, previousType } = {}) {
     const cat = String(category || "").trim();
     if (envelopeTouched) {
@@ -1452,7 +1500,7 @@ const STS = (() => {
     // A category the user typed decides the bucket; a label that isn't an envelope goes to review
     // with the typed text kept, instead of snapping back to the old envelope.
     if (previousCategory !== undefined && cat !== String(previousCategory || "").trim()) {
-      return resolveTypedCategory(cat, type);
+      return resolveTypedCategory(cat, type, userCategoryMap);
     }
     // Untouched dropdown + unchanged category on a stamped row: keep its envelope (stamp once).
     if (previousEnvelopeId) {
@@ -1463,7 +1511,7 @@ const STS = (() => {
         description === previousDescription && type === previousType) {
       return { envelopeId: null, category: cat };
     }
-    const assignment = resolveEnvelopeAssignment({ description, category: cat, type });
+    const assignment = resolveEnvelopeAssignment({ description, category: cat, type, userCategoryMap });
     return { envelopeId: assignment.envelopeId, category: assignment.category || cat };
   }
   function alignLedgerCategories(db) {
@@ -1492,7 +1540,7 @@ const STS = (() => {
     }
     return n;
   }
-  function previewEnvelopeRemap(ledger) {
+  function previewEnvelopeRemap(ledger, userCategoryMap) {
     const rows = Array.isArray(ledger) ? ledger : [];
     return rows.map(e => {
       const has = Object.prototype.hasOwnProperty.call(e, "envelopeId") && e.envelopeId != null && e.envelopeId !== "";
@@ -1503,7 +1551,7 @@ const STS = (() => {
           envelopeId: e.envelopeId, action: "keep", why: "already stamped", needsReview: false
         };
       }
-      const r = resolveEnvelopeAssignment({ description: e.description, category: e.category, type: e.type });
+      const r = resolveEnvelopeAssignment({ description: e.description, category: e.category, type: e.type, userCategoryMap });
       const action = r.envelopeId ? "map" : (r.needsReview ? "review" : "skip");
       return {
         id: e.id, date: e.date, description: e.description, amount: e.amount, type: e.type,
@@ -1670,7 +1718,8 @@ const STS = (() => {
         phase: 1,
         envelopeEpoch: null,
         phaseActivatedAt: {},
-        fundingEvents: []
+        fundingEvents: [],
+        userCategoryMap: {}
       };
     }
     const p = db.envelopePlan;
@@ -1678,6 +1727,7 @@ const STS = (() => {
     if (!p.phaseActivatedAt || typeof p.phaseActivatedAt !== "object") p.phaseActivatedAt = {};
     if (!Array.isArray(p.fundingEvents)) p.fundingEvents = [];
     if (p.envelopeEpoch === undefined) p.envelopeEpoch = null;
+    if (!p.userCategoryMap || typeof p.userCategoryMap !== "object" || Array.isArray(p.userCategoryMap)) p.userCategoryMap = {};
     return db;
   }
 
@@ -1978,6 +2028,7 @@ const STS = (() => {
     overduePendingOut, stalePending, computeAll,
     ENVELOPE_DEFS, ENVELOPE_BY_ID, ENVELOPE_NAME_BY_ID, LEGACY_CATEGORY_MAP,
     resolveEnvelopeAssignment, resolveEditEnvelopeChoice, resolveTypedCategory, previewEnvelopeRemap, applyEnvelopeRemap, alignLedgerCategories,
+    setUserCategoryMapping, deleteUserCategoryMapping, userCategoryMappings,
     envelopeName, envelopeKind, isManualReviewMerchant, isCanonicalCategory,
     FULL_NET_PER_PAYCHECK, weekdayFederalHolidays, holidayAdjustedNetPerPaycheck, holidayAdjustedPaycheckMonthly,
     payFrequencyDivisor, monthlyByIdForEvent, allocateFundingEvent,
@@ -2321,7 +2372,10 @@ function renderQuickAddOptions() {
     + spendableAccounts().map(a => `<option value="acct:${esc(a.name)}">🏦 ${esc(a.name)}</option>`).join("");
   if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
   if (!$("qaDate").value) $("qaDate").value = STS.asOf(DB);
-  const cats = STS.ENVELOPE_DEFS.map(e => e.name);
+  const cats = [...new Set([
+    ...STS.ENVELOPE_DEFS.map(e => e.name),
+    ...STS.userCategoryMappings(DB).map(m => m.label)
+  ])].sort((a, b) => a.localeCompare(b));
   $("catList").innerHTML = cats.map(c => `<option value="${esc(c)}">`).join("");
 }
 function quickAdd() {
@@ -2349,7 +2403,8 @@ function quickAdd() {
       : { type: "cash_expense", amount: -Math.abs(amt), source: wName, payMethod: "Debit", cashImpact: true };
   }
   const catIn = $("qaCat").value.trim() || "";
-  const assign = STS.resolveEnvelopeAssignment({ description: desc, category: catIn, type: e.type });
+  const assign = STS.resolveEnvelopeAssignment({ description: desc, category: catIn, type: e.type,
+    userCategoryMap: DB.envelopePlan.userCategoryMap });
   DB.ledger.push({
     id: useId(), date, description: desc, category: assign.category || catIn,
     envelopeId: assign.envelopeId,
@@ -2466,7 +2521,7 @@ function openEditEvent(id) {
   let envelopeTouched = false;
   evCat.addEventListener("change", () => {
     // Mirror what Save will do: a non-envelope label clears the dropdown (row goes to review).
-    const assign = STS.resolveTypedCategory(evCat.value, e.type);
+    const assign = STS.resolveTypedCategory(evCat.value, e.type, DB.envelopePlan.userCategoryMap);
     evEnv.value = assign.envelopeId || "";
     if (assign.envelopeId) evCat.value = assign.category;
     envelopeTouched = false;
@@ -2490,7 +2545,7 @@ function openEditEvent(id) {
     e.status = $("evStatus").value; e.notes = $("evNotes").value.trim();
     const envelopeChoice = STS.resolveEditEnvelopeChoice({
       description: e.description, category: $("evCat").value, type: e.type,
-      selectedEnvelopeId: evEnv.value, envelopeTouched,
+      selectedEnvelopeId: evEnv.value, envelopeTouched, userCategoryMap: DB.envelopePlan.userCategoryMap,
       previousEnvelopeId, previousCategory, previousDescription, previousType
     });
     e.envelopeId = envelopeChoice.envelopeId;
@@ -2888,7 +2943,8 @@ function openGenerate() {
         const m = missing[+cb.dataset.gen];
         STS.instanceEvents(DB, m.template, m.date).forEach(ev => {
           const assign = STS.resolveEnvelopeAssignment({
-            description: ev.description, category: ev.category, type: ev.type
+            description: ev.description, category: ev.category, type: ev.type,
+            userCategoryMap: DB.envelopePlan.userCategoryMap
           });
           DB.ledger.push({
             id: useId(), ...ev,
@@ -2907,7 +2963,7 @@ function openGenerate() {
 // ---------------- envelope remap (Phase 1) ----------------
 let envRemapRows = null;
 function previewEnvelopeRemapUi() {
-  const sugg = STS.previewEnvelopeRemap(DB.ledger);
+  const sugg = STS.previewEnvelopeRemap(DB.ledger, DB.envelopePlan.userCategoryMap);
   envRemapRows = sugg;
   const counts = { keep: 0, map: 0, review: 0, skip: 0 };
   sugg.forEach(s => { counts[s.action] = (counts[s.action] || 0) + 1; });
@@ -3042,7 +3098,8 @@ function doImport() {
       }
     }
     // Stamp envelopeId once at creation (design §3.3 / §8). Transfers stay null.
-    const assign = STS.resolveEnvelopeAssignment({ description: base.description, category: base.category, type: base.type });
+    const assign = STS.resolveEnvelopeAssignment({ description: base.description, category: base.category, type: base.type,
+      userCategoryMap: DB.envelopePlan.userCategoryMap });
     base.envelopeId = assign.envelopeId;
     if (assign.category) base.category = assign.category;
     DB.ledger.push(base); added++;
@@ -3296,6 +3353,61 @@ function voidFundingEvent(eventId) {
 }
 
 // ---------------- settings tab ----------------
+function renderCategoryMappings() {
+  const mappings = STS.userCategoryMappings(DB);
+  $("categoryMappingsList").innerHTML = mappings.length
+    ? `<div class="scroll-x"><table>
+        <thead><tr><th>Category label</th><th>Envelope</th><th>Rule</th><th></th></tr></thead>
+        <tbody>${mappings.map((m, i) => `<tr>
+          <td>${esc(m.label)}</td>
+          <td>${esc(m.name || "Unknown envelope")}</td>
+          <td>${m.overridesBuiltIn ? '<span class="chip warn">overrides built-in</span>' : ""}
+              ${m.paused ? '<span class="chip warn">paused — spending may go over budget</span>' : ""}</td>
+          <td style="white-space:nowrap"><button class="mini" type="button" data-map-action="edit" data-map-index="${i}">Edit</button>
+              <button class="mini danger" type="button" data-map-action="delete" data-map-index="${i}">Delete</button></td>
+        </tr>`).join("")}</tbody>
+      </table></div>`
+    : '<p class="hint">No custom mappings yet. Built-in category rules still apply.</p>';
+}
+function openCategoryMappingDialog(previousLabel) {
+  const current = STS.userCategoryMappings(DB).find(m => m.label === previousLabel);
+  const options = STS.ENVELOPE_DEFS.map(d => `<option value="${esc(d.id)}" ${d.kind === "fixed" ? "disabled" : ""}
+    ${current && current.envelopeId === d.id ? "selected" : ""}>${esc(d.name)}${d.kind === "fixed" ? " (fixed — unavailable)" : ""}</option>`).join("");
+  openDlg(`
+    <h3>${current ? "Edit" : "Add"} category mapping</h3>
+    <p class="hint">Labels ignore case and extra spaces. Rows already filed keep their envelope when you change this rule.</p>
+    <div class="frow">
+      <div class="f"><span>Category label</span><input id="mapLabel" value="${esc(current ? current.label : "")}" size="26"></div>
+      <div class="f"><span>Envelope</span><select id="mapEnvelope"><option value="">Choose an envelope</option>${options}</select></div>
+    </div>
+    <p class="hint" id="mapTargetWarning" role="status"></p>
+    <p class="hint" id="mapError" role="alert"></p>
+    <div class="dlg-actions">
+      <button class="ghost" type="button" onclick="closeDlg()">Cancel</button>
+      <button class="primary" type="button" id="mapSave">Save mapping</button>
+    </div>
+  `);
+  const updateWarning = () => {
+    const d = STS.ENVELOPE_BY_ID[$("mapEnvelope").value];
+    $("mapTargetWarning").textContent = d && d.kind === "paused"
+      ? "This envelope is paused and receives no funding; spending will show as over budget."
+      : d && d.kind === "fixed"
+        ? "Fixed envelopes are derived from recurring bills and cannot be mapping targets."
+        : "";
+  };
+  $("mapEnvelope").addEventListener("change", updateWarning);
+  updateWarning();
+  $("mapSave").onclick = () => {
+    const result = STS.setUserCategoryMapping(DB, $("mapLabel").value, $("mapEnvelope").value, previousLabel);
+    if (!result.ok) { $("mapError").textContent = result.reason; return; }
+    closeDlg();
+    save();
+  };
+}
+function removeCategoryMapping(label) {
+  if (!confirm(`Delete the mapping for "${label}"? Rows already filed keep their envelope. Future rows fall back to the built-in map or review.`)) return;
+  if (STS.deleteUserCategoryMapping(DB, label)) save();
+}
 function renderSettings() {
   const s = DB.settings;
   $("setFreq").value = s.payFrequency;
@@ -3307,6 +3419,7 @@ function renderSettings() {
   $("setAsofMode").value = s.asOfMode;
   $("setAsofDate").value = s.asOfDate || "";
   $("setAsofDate").disabled = s.asOfMode !== "fixed";
+  renderCategoryMappings();
 }
 function bindSettings() {
   const s = () => DB.settings;
@@ -3318,6 +3431,15 @@ function bindSettings() {
   $("setHorizon").onchange = e => { const v = parseInt(e.target.value, 10); if (v >= 14 && v <= 365) { s().horizonDays = v; save(); } };
   $("setAsofMode").onchange = e => { s().asOfMode = e.target.value; if (e.target.value === "fixed" && !s().asOfDate) s().asOfDate = STS.todayStr(); save(); };
   $("setAsofDate").onchange = e => { if (e.target.value) { s().asOfDate = e.target.value; save(); } };
+  $("addCategoryMappingBtn").addEventListener("click", () => openCategoryMappingDialog());
+  $("categoryMappingsList").addEventListener("click", e => {
+    const button = e.target.closest("button[data-map-action]");
+    if (!button) return;
+    const mapping = STS.userCategoryMappings(DB)[+button.dataset.mapIndex];
+    if (!mapping) return;
+    if (button.dataset.mapAction === "edit") openCategoryMappingDialog(mapping.label);
+    if (button.dataset.mapAction === "delete") removeCategoryMapping(mapping.label);
+  });
 }
 
 // ---------------- dialog & tabs ----------------
