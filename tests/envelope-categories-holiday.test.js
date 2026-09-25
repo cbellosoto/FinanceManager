@@ -112,6 +112,28 @@ for (const [desc, cat, type] of [
     previousEnvelopeId: null, previousCategory: "Groceries", previousDescription: "Aldi", previousType: "card_purchase" });
   eq("unassigned remains in review after a later unrelated edit", laterEdit.envelopeId, null);
 
+  // Typed category decides the bucket when the dropdown is untouched (it still shows the old id).
+  const stamped = { previousEnvelopeId: "groceries", previousCategory: "Groceries", previousType: "card_purchase" };
+  const typedTravel = STS.resolveEditEnvelopeChoice({ description: "Uber", category: "Travel", type: "card_purchase",
+    selectedEnvelopeId: "groceries", envelopeTouched: false, previousDescription: "Uber", ...stamped });
+  eq("typed non-envelope category unassigns", typedTravel.envelopeId, null);
+  eq("typed non-envelope category is kept, not overwritten", typedTravel.category, "Travel");
+  const typedOnMerchant = STS.resolveEditEnvelopeChoice({ description: "Chipotle", category: "Travel", type: "card_purchase",
+    selectedEnvelopeId: "restaurants", envelopeTouched: false, previousDescription: "Chipotle",
+    previousEnvelopeId: "restaurants", previousCategory: "Restaurants", previousType: "card_purchase" });
+  eq("merchant rule does not override a typed label", typedOnMerchant.envelopeId, null);
+  eq("typed label kept on merchant row", typedOnMerchant.category, "Travel");
+  const typedLegacy = STS.resolveEditEnvelopeChoice({ description: "Uber", category: "Food & Drink", type: "card_purchase",
+    selectedEnvelopeId: "groceries", envelopeTouched: false, previousDescription: "Uber", ...stamped });
+  eq("typed legacy label maps to its envelope", typedLegacy.envelopeId, "restaurants");
+  eq("typed legacy label renamed to envelope", typedLegacy.category, "Restaurants");
+  const descOnly = STS.resolveEditEnvelopeChoice({ description: "Chipotle", category: "Groceries", type: "card_purchase",
+    selectedEnvelopeId: "groceries", envelopeTouched: false, previousDescription: "Aldi", ...stamped });
+  eq("stamped row keeps envelope when only description changes", descOnly.envelopeId, "groceries");
+  const pickedOverTyped = STS.resolveEditEnvelopeChoice({ description: "Uber", category: "Travel", type: "card_purchase",
+    selectedEnvelopeId: "christopher-fun", envelopeTouched: true, previousDescription: "Uber", ...stamped });
+  eq("explicit dropdown pick still wins", pickedOverTyped.envelopeId, "christopher-fun");
+
   const db = {
     settings: { payFrequency: "Biweekly", lastPayday: "2026-09-18", nextPayday: "2026-10-02", asOfMode: "fixed", asOfDate: "2026-09-24" },
     envelopePlan: { phase: 1, envelopeEpoch: "2026-09-18", phaseActivatedAt: {}, fundingEvents: [] },

@@ -1435,12 +1435,28 @@ const STS = (() => {
     if (cat) return { envelopeId: null, category: cat, needsReview: true, why: "uncategorized label" };
     return { envelopeId: null, category: "", needsReview: true, why: "no match" };
   }
+  // Category text typed by the user → envelope. Description rules are skipped so a typed
+  // non-envelope label (e.g. "Travel" on a Chipotle row) isn't overridden by the merchant.
+  function resolveTypedCategory(category, type) {
+    const cat = String(category || "").trim();
+    const r = resolveEnvelopeAssignment({ description: "", category: cat, type });
+    return { envelopeId: r.envelopeId, category: r.envelopeId ? (r.category || cat) : cat };
+  }
   function resolveEditEnvelopeChoice({ description, category, type, selectedEnvelopeId, envelopeTouched,
     previousEnvelopeId, previousCategory, previousDescription, previousType } = {}) {
     const cat = String(category || "").trim();
-    if (envelopeTouched || selectedEnvelopeId) {
+    if (envelopeTouched) {
       const id = selectedEnvelopeId || null;
       return { envelopeId: id, category: id ? (envelopeName(id) || cat) : cat };
+    }
+    // A category the user typed decides the bucket; a label that isn't an envelope goes to review
+    // with the typed text kept, instead of snapping back to the old envelope.
+    if (previousCategory !== undefined && cat !== String(previousCategory || "").trim()) {
+      return resolveTypedCategory(cat, type);
+    }
+    // Untouched dropdown + unchanged category on a stamped row: keep its envelope (stamp once).
+    if (previousEnvelopeId) {
+      return { envelopeId: previousEnvelopeId, category: envelopeName(previousEnvelopeId) || cat };
     }
     // An already-unassigned row stays in review when only unrelated fields are edited.
     if (previousEnvelopeId === null && cat === String(previousCategory || "").trim() &&
@@ -1961,7 +1977,7 @@ const STS = (() => {
     parseCSV, parseDateLoose, parseAmountLoose, normalizeCsv, classifyImport,
     overduePendingOut, stalePending, computeAll,
     ENVELOPE_DEFS, ENVELOPE_BY_ID, ENVELOPE_NAME_BY_ID, LEGACY_CATEGORY_MAP,
-    resolveEnvelopeAssignment, resolveEditEnvelopeChoice, previewEnvelopeRemap, applyEnvelopeRemap, alignLedgerCategories,
+    resolveEnvelopeAssignment, resolveEditEnvelopeChoice, resolveTypedCategory, previewEnvelopeRemap, applyEnvelopeRemap, alignLedgerCategories,
     envelopeName, envelopeKind, isManualReviewMerchant, isCanonicalCategory,
     FULL_NET_PER_PAYCHECK, weekdayFederalHolidays, holidayAdjustedNetPerPaycheck, holidayAdjustedPaycheckMonthly,
     payFrequencyDivisor, monthlyByIdForEvent, allocateFundingEvent,
@@ -2449,11 +2465,11 @@ function openEditEvent(id) {
   const evCat = $("evCat"), evEnv = $("evEnv");
   let envelopeTouched = false;
   evCat.addEventListener("change", () => {
-    const assign = STS.resolveEnvelopeAssignment({ description: e.description, category: evCat.value.trim(), type: e.type });
-    if (assign.envelopeId) {
-      evEnv.value = assign.envelopeId;
-      if (assign.category) evCat.value = assign.category;
-    }
+    // Mirror what Save will do: a non-envelope label clears the dropdown (row goes to review).
+    const assign = STS.resolveTypedCategory(evCat.value, e.type);
+    evEnv.value = assign.envelopeId || "";
+    if (assign.envelopeId) evCat.value = assign.category;
+    envelopeTouched = false;
   });
   evEnv.addEventListener("change", () => {
     envelopeTouched = true;
