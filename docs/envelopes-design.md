@@ -315,6 +315,64 @@ Phase 2 ships the Envelopes tab with funding, derived balances, and the funding 
 
 ---
 
+## 15. User-controlled category mappings (requested 2026-09-24, spec'd 2026-09-25)
+
+Christopher wants to control the category → envelope mapping himself — a small list in Settings where he says which labels feed which bucket (e.g. "Grocery", "Costco Food" → Groceries) — instead of the built-in `LEGACY_CATEGORY_MAP` that only code changes can edit. Goal: no extra steps — pick a category and the right envelope gets it. With this in place, the "count spent by category on the fly" alternative is rejected.
+
+### 15.1 What and where
+
+- **UI:** a "Category mappings" list in Settings: rows of `{ label, envelope }`, add/edit/delete. Follows the existing tab pattern (Recurring, Cards): a user-owned list in the blob, managed in the app.
+- **Storage:** `db.envelopePlan.userCategoryMap`, a plain object `{ "<normalizedLabel>": "<envelopeId>" }`, keys normalized with the existing `normCatKey` (lowercase, collapsed whitespace). Seeded as `{}` — an empty map means today's behavior exactly (zero-risk rollout). Lives in the synced blob under the existing `baseVersion`/409 rules; no schema change (schemaless JSON), no migration (absent = `{}`).
+- **Values are envelope ids, not names** — stable if a display name ever changes. UI shows names.
+- **Resolution order** in `resolveEnvelopeAssignment` (new step 3; `resolveTypedCategory` inherits it):
+  1. Non-spend type/label → `null` (protected — the user map can never claim these).
+  2. Canonical envelope name → that envelope.
+  3. **User map hit → mapped envelope.** The label is Christopher's explicit choice, so it beats *both* the mixed-merchant review *and* the merchant description rules.
+  4. Mixed merchant (Amazon/Walmart/Costco/Sam's) → review (unchanged).
+  5. Description rules → envelope (unchanged).
+  6. Built-in `LEGACY_CATEGORY_MAP` → envelope (fallback).
+  7. Otherwise → review, label kept.
+
+### 15.2 History (Claude Q1)
+
+**Mapping edits affect only rows stamped after the edit, plus currently-unassigned review rows (never stamped).** Stamped rows keep their envelope. Rationale: "stamp once" (§3.3) — a mapping edit is a rule change, not a data correction, and funding events were recorded against the old bucket, so re-filing would desync funded vs. spent in both envelopes. Per-row correction already exists (Ledger → edit → Envelope). No bulk re-file UI.
+
+### 15.3 Layering (Claude Q2)
+
+Yes to the proposal: user map is consulted **before** the built-in map — **user wins** on key collision. When a normalized label also exists in `LEGACY_CATEGORY_MAP`, the UI shows an "overrides built-in" badge so the override is visible.
+
+### 15.4 Guardrails (Claude Q3)
+
+- **Target envelope:** must be active and non-fixed (variable, sinking, goal, buffer). **Fixed → blocked** with a message — fixed envelopes are derived from recurring rows (§5); spending against them would corrupt the derived display. **Paused → allowed with an inline warning** ("this envelope isn't funded — spending will show as over-budget").
+- **Source label:** refused when it normalizes to (a) a **canonical envelope name** ("Groceries is already an envelope — pick a different label"; canonical names resolve directly, so such a mapping could never fire anyway), or (b) a **reserved non-spend label** (`NON_SPEND_CATS`: Transfer, Income, RF1, … — "reserved label, never envelope spending"). Mapping "Transfer" → Groceries would corrupt both envelope and transfer semantics.
+
+### 15.5 Conflicts (Claude Q4)
+
+- **Duplicate add** (same normalized label): upsert in place — no duplicates. Keys are normalized, so "Grocery" and "grocery " collide by design.
+- **Delete:** stamped rows keep their envelopes; future rows fall back to the built-in map/review. UI copy: "Rows already filed keep their envelope."
+- **Canonical-name-as-source:** refused per §15.4. **Built-in-key collision:** allowed, badged as override per §15.3.
+
+### 15.6 Mixed merchants (Claude Q5)
+
+**Yes — a user mapping overrides the mixed-merchant review, but only on label match.** The review exists because one merchant spans envelopes; Christopher mapping the *label* "Costco Food" → Groceries is exactly the disambiguation the queue was waiting for. Description rules still apply when no label mapping exists. Note the interplay: mappings do **not** retroactively clear the existing review queue (§15.2) — the Settings bulk-assignment tool handles the backlog; mappings prevent future buildup.
+
+### 15.7 Unintended consequences checked
+
+- **Funding math untouched.** Mappings affect only the spent side (bucket assignment at stamp time). Funding events, epoch, reversals, monthly targets, and the funded/spent/remaining derivation are unchanged.
+- **Empty-map regression test required:** with `userCategoryMap = {}`, resolution must be byte-identical to today's behavior.
+- **Review queue shrinks over time** (intended). Backlog still needs the bulk tool.
+- **Two-device mapping edits:** last-writer-wins under `baseVersion`/409, same as every other blob write. Acceptable.
+- **`alignLedgerCategories`** (export-only normalization) stays on the built-in map — no change.
+- **Quick Add datalist:** include user-mapped labels alongside envelope names (small UX win for "no extra steps").
+- **Out of scope:** merchant description rules (`ORDERED_TRANSACTION_RULES`) stay hard-coded for now; envelope add/rename stays code-side. Future work if wanted — not this PR.
+
+### 15.8 Implementation notes
+
+- One PR ("User category mappings"), Settings UI + engine layering. Static-only tests.
+- Tests: empty map ⇒ identical resolution; user map beats built-in on collision; user map beats mixed-merchant review and description rules; fixed target blocked; reserved label refused; canonical-as-source refused; delete falls back to built-in; stamped rows unaffected by later mapping edits; upsert on duplicate add.
+
+---
+
 ## Rev 2 changelog (2026-09-20, in response to code-agent review)
 
 1. **One balance invariant** — §1 non-goal + §3.1: no mutable `balances`; `remaining = funded − spent`, fully derived. "Sweep to buffer" is now a logged `reallocate` event (§6), not a mutation.
@@ -339,3 +397,7 @@ Phase 2 ships the Envelopes tab with funding, derived balances, and the funding 
 ## Rev 2.2 changelog (2026-09-21, queued by Christopher)
 
 - **New §14: Phase 2 follow-up controls.** Surfaced while writing the household's step-by-step envelope guide: (14.1) "Move money" UI for `reallocate` events (the engine already supports them per §6 — the button doesn't exist yet); (14.2) editable monthly plan targets with history-preserving semantics (future funding uses new targets, past events keep recorded amounts, same rule as the phase toggle); (14.3) funding-event correction via append-only reversal events (no deletes). One follow-up PR ("Phase 2b: envelope controls") after Phase 2 merges; §12 phase list updated.
+
+## Rev 2.3 changelog (2026-09-25, user-controlled category mappings)
+
+- **New §15: user-controlled category mappings.** Requested by Christopher 2026-09-24 (relayed by Claude): a "Category mappings" list in Settings (`db.envelopePlan.userCategoryMap`, seeded `{}`), replacing dependence on the hard-coded `LEGACY_CATEGORY_MAP`. Answers to Claude's five questions: (1) history — mapping edits affect only rows stamped after the edit + unassigned review rows, never re-file stamped rows; (2) storage — synced blob under baseVersion/409, user map consulted before built-in map, user wins with an "overrides built-in" badge; (3) guardrails — fixed targets blocked, paused allowed with warning, canonical-envelope names and reserved non-spend labels refused as sources; (4) conflicts — duplicate add upserts, delete falls back to built-in map, stamped rows keep envelopes; (5) mixed merchants — a user label mapping overrides the mixed-merchant review. Funding math untouched; empty-map regression test required; merchant description rules stay hard-coded (out of scope).
